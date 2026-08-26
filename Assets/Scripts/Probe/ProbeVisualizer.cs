@@ -224,9 +224,18 @@ namespace VirtualUltrasound.Probe
             return mat;
         }
 
+        private void ApplyMaterial(GameObject obj, Material mat)
+        {
+            MeshRenderer mr = obj.GetComponent<MeshRenderer>();
+            if (mr != null)
+            {
+                mr.sharedMaterial = mat;
+            }
+        }
+
         private void RemoveCollider(GameObject obj)
         {
-            Collider col = obj.GetComponent<Collider>();
+            Component col = obj.GetComponent("Collider");
             if (col != null)
             {
                 if (Application.isPlaying) Destroy(col);

@@ -28,6 +28,17 @@ namespace VirtualUltrasound.Bootstrap
             }
         }
 
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
+        private static void AutoInitializeOnPlay()
+        {
+            if (FindObjectOfType<SceneBootstrapper>() == null && FindObjectOfType<ProbeGeometry>() == null)
+            {
+                GameObject bootstrapperObj = new GameObject("AppBootstrapper");
+                SceneBootstrapper bootstrapper = bootstrapperObj.AddComponent<SceneBootstrapper>();
+                bootstrapper.BuildScene();
+            }
+        }
+
         public void BuildScene()
         {
             // 1. Lighting

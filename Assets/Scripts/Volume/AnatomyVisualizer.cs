@@ -1,4 +1,5 @@
 using UnityEngine;
+using VirtualUltrasound.Core;
 
 namespace VirtualUltrasound.Volume
 {
@@ -145,7 +146,7 @@ namespace VirtualUltrasound.Volume
 
         private void RemoveCollider(GameObject obj)
         {
-            Collider col = obj.GetComponent<Collider>();
+            Component col = obj.GetComponent("Collider");
             if (col != null)
             {
                 if (Application.isPlaying) Destroy(col);

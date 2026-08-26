@@ -37,6 +37,7 @@ ExportedObj/
 .vscode/
 .DS_Store
 Thumbs.db
+review-fix.md
 
 # .NET build artifacts
 bin/

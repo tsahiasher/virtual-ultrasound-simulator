@@ -1,5 +1,10 @@
 # Project Progress Log
 
+**2026-08-26 — Unity Editor integration and scene bootstrapper enhancements (offline, code + tests). ✅ DONE**
+Added 1-click Editor scene setup menu (`Virtual Ultrasound > Setup Simulator Scene in Editor`), runtime auto-initialization hook (`RuntimeInitializeOnLoadMethod`), resolved physics module references and namespace imports in visualizers, and included Unity metadata and project settings.
+- **Proof:** `dotnet test tests/VirtualUltrasound.Tests/VirtualUltrasound.Tests.csproj` -> 7 passed, 0 failed (Duration: 15ms); clean compilation in Unity Editor.
+- **Files Touched:** `Assets/Scripts/Bootstrap/SceneBootstrapper.cs`, `Assets/Scripts/Editor/SceneSetupMenu.cs`, `Assets/Scripts/Probe/ProbeVisualizer.cs`, `Assets/Scripts/Volume/AnatomyVisualizer.cs`, `Packages/manifest.json`, `ProjectSettings/*`, `.gitignore`, `docs/PROGRESS.md`.
+
 **2026-08-26 — Virtual Ultrasound Simulator Milestone 1 shipped (offline, code + tests + docs). ✅ DONE**
 Implemented the foundational architecture and first milestone for the real-time Virtual Ultrasound Simulator in Unity / C#. Established a modular component architecture separating probe kinematics, geometry, volume representation, slice sampling, 3D rendering, and split-screen UI. Created procedural synthetic anatomy (ellipsoid body, spherical organ, anechoic cyst, vessel cylinder), rigid probe controller with 6-DOF controls and preset views, zero-allocation CPU slice generator, 3D orbit camera, split-screen UI HUD with live ultrasound display and telemetry, and self-assembling `SceneBootstrapper`. Verified deterministic geometric correctness through a 7-test standalone NUnit suite with 100% pass rate.
 - **Proof:** `dotnet test tests/VirtualUltrasound.Tests/VirtualUltrasound.Tests.csproj` -> 7 passed, 0 failed, 0 skipped (Duration: 21ms).
