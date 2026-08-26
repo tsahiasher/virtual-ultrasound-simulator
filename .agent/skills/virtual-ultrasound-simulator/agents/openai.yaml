@@ -1,0 +1,3 @@
+interface:
+  display_name: "Virtual Ultrasound Simulator"
+  short_description: "Build and review the Unity ultrasound simulator"

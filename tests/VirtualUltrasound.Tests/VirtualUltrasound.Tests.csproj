@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.8.0" />
+    <PackageReference Include="NUnit" Version="3.14.0" />
+    <PackageReference Include="NUnit3TestAdapter" Version="4.5.0" />
+    <PackageReference Include="NUnit.Analyzers" Version="3.9.0" />
+    <PackageReference Include="coverlet.collector" Version="6.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Compile core source files from Assets/Scripts/Core and Volume directly -->
+    <Compile Include="..\..\Assets\Scripts\Core\CoordinateTransform.cs" Link="Core\CoordinateTransform.cs" />
+    <Compile Include="..\..\Assets\Scripts\Core\VolumeTypes.cs" Link="Core\VolumeTypes.cs" />
+    <Compile Include="..\..\Assets\Scripts\Core\SliceBuffer.cs" Link="Core\SliceBuffer.cs" />
+    <Compile Include="..\..\Assets\Scripts\Core\IVolumeData.cs" Link="Core\IVolumeData.cs" />
+    <Compile Include="..\..\Assets\Scripts\Core\IVolumeSampler.cs" Link="Core\IVolumeSampler.cs" />
+    <Compile Include="..\..\Assets\Scripts\Core\ISliceGenerator.cs" Link="Core\ISliceGenerator.cs" />
+    <Compile Include="..\..\Assets\Scripts\Volume\PrimitiveShapes.cs" Link="Volume\PrimitiveShapes.cs" />
+    <Compile Include="..\..\Assets\Scripts\Rendering\CPUSliceGenerator.cs" Link="Rendering\CPUSliceGenerator.cs" />
+  </ItemGroup>
+
+</Project>
