@@ -20,6 +20,7 @@ namespace VirtualUltrasound.Editor
             }
 
             bootstrapper.BuildScene();
+            EditorUtility.SetDirty(bootstrapper.gameObject);
             EditorUtility.DisplayDialog(
                 "Virtual Ultrasound Simulator",
                 "Scene successfully set up!\n\nSwitch to the Game tab or press Play (Ctrl + P) to interact with the virtual probe and live 2D ultrasound view.",

@@ -1,3 +1,4 @@
+using System;
 using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.EventSystems;
@@ -11,8 +12,8 @@ namespace VirtualUltrasound.Bootstrap
 {
     /// <summary>
     /// Self-contained scene bootstrapper that configures the entire virtual ultrasound simulation:
-    /// 3D lighting, orbiting camera, synthetic anatomy volume, virtual probe, slice renderer,
-    /// and split-screen UI HUD with zero manual scene setup required.
+    /// 3D lighting, background clearer, orbiting camera, synthetic anatomy volume, virtual probe,
+    /// slice renderer, and split-screen UI HUD with zero manual scene setup required.
     /// </summary>
     [DefaultExecutionOrder(-100)]
     public class SceneBootstrapper : MonoBehaviour
@@ -31,10 +32,15 @@ namespace VirtualUltrasound.Bootstrap
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void AutoInitializeOnPlay()
         {
-            if (FindObjectOfType<SceneBootstrapper>() == null && FindObjectOfType<ProbeGeometry>() == null)
+            SceneBootstrapper bootstrapper = FindObjectOfType<SceneBootstrapper>();
+            if (bootstrapper == null && FindObjectOfType<ProbeGeometry>() == null)
             {
                 GameObject bootstrapperObj = new GameObject("AppBootstrapper");
-                SceneBootstrapper bootstrapper = bootstrapperObj.AddComponent<SceneBootstrapper>();
+                bootstrapper = bootstrapperObj.AddComponent<SceneBootstrapper>();
+            }
+
+            if (bootstrapper != null)
+            {
                 bootstrapper.BuildScene();
             }
         }
@@ -59,8 +65,8 @@ namespace VirtualUltrasound.Bootstrap
             // 6. Slice Renderer
             SliceRenderer sliceRenderer = EnsureSliceRenderer(probeGeometry, sampler);
 
-            // 7. 3D Scene Camera with Orbit Controller
-            Camera mainCam = EnsureCamera();
+            // 7. Cameras (Background Clearer + Main 3D Viewport)
+            EnsureCameras();
 
             // 8. Split-screen UI Canvas
             BuildUI(sliceRenderer, probeGeometry);
@@ -80,7 +86,7 @@ namespace VirtualUltrasound.Bootstrap
             }
 
             RenderSettings.ambientMode = UnityEngine.Rendering.AmbientMode.Flat;
-            RenderSettings.ambientLight = new Color(0.35f, 0.38f, 0.45f);
+            RenderSettings.ambientLight = new Color(0.40f, 0.44f, 0.52f);
         }
 
         private void EnsureEventSystem()
@@ -148,12 +154,36 @@ namespace VirtualUltrasound.Bootstrap
             return renderer;
         }
 
-        private Camera EnsureCamera()
+        private void EnsureCameras()
         {
+            // 1. Background Camera (clears entire screen to dark slate so UI/right-side is never un-cleared black)
+            Camera bgCam = null;
+            GameObject bgCamObj = GameObject.Find("Background_Camera");
+            if (bgCamObj == null)
+            {
+                bgCamObj = new GameObject("Background_Camera");
+                bgCam = bgCamObj.AddComponent<Camera>();
+            }
+            else
+            {
+                bgCam = bgCamObj.GetComponent<Camera>();
+            }
+
+            bgCam.depth = -10;
+            bgCam.clearFlags = CameraClearFlags.SolidColor;
+            bgCam.backgroundColor = new Color(0.06f, 0.08f, 0.11f, 1f); // Dark slate monitor bezel color
+            bgCam.cullingMask = 0; // Render nothing, just clear full screen
+            bgCam.rect = new Rect(0f, 0f, 1f, 1f);
+
+            // 2. Main 3D Viewport Camera (renders 3D scene on left 62%)
             Camera cam = Camera.main;
             if (cam == null)
             {
-                cam = FindObjectOfType<Camera>();
+                Camera[] cams = FindObjectsOfType<Camera>();
+                foreach (var c in cams)
+                {
+                    if (c != bgCam) { cam = c; break; }
+                }
             }
 
             if (cam == null)
@@ -163,12 +193,11 @@ namespace VirtualUltrasound.Bootstrap
                 cam = camObj.AddComponent<Camera>();
             }
 
+            cam.depth = 0;
             cam.clearFlags = CameraClearFlags.SolidColor;
-            cam.backgroundColor = new Color(0.10f, 0.12f, 0.16f); // Sleek modern dark slate background
+            cam.backgroundColor = new Color(0.11f, 0.14f, 0.19f, 1f); // Modern dark slate 3D viewport
             cam.nearClipPlane = 0.01f;
             cam.farClipPlane = 100f;
-
-            // Configure 3D viewport to occupy left 62% of the screen
             cam.rect = new Rect(0f, 0f, 0.62f, 1f);
 
             SceneCameraController camCtrl = cam.GetComponent<SceneCameraController>();
@@ -176,30 +205,58 @@ namespace VirtualUltrasound.Bootstrap
             {
                 camCtrl = cam.gameObject.AddComponent<SceneCameraController>();
             }
+        }
 
-            return cam;
+        private static Font GetDefaultFont()
+        {
+            Font font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            if (font == null) font = Resources.GetBuiltinResource<Font>("Arial.ttf");
+            if (font == null) font = Font.CreateDynamicFontFromOSFont("Arial", 14);
+            if (font == null) font = Font.CreateDynamicFontFromOSFont("Segoe UI", 14);
+            if (font == null) font = Font.CreateDynamicFontFromOSFont("Tahoma", 14);
+            if (font == null)
+            {
+                Font[] fonts = Resources.FindObjectsOfTypeAll<Font>();
+                if (fonts != null && fonts.Length > 0) font = fonts[0];
+            }
+            return font;
         }
 
         private void BuildUI(SliceRenderer sliceRenderer, ProbeGeometry probe)
         {
             Canvas canvas = FindObjectOfType<Canvas>();
-            if (canvas != null) return; // UI already exists
+            if (canvas != null && canvas.transform.Find("UltrasoundPanel") != null)
+            {
+                return; // Complete UI already exists
+            }
 
-            GameObject canvasObj = new GameObject("UI_SplitScreenCanvas");
-            canvas = canvasObj.AddComponent<Canvas>();
-            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            GameObject canvasObj;
+            if (canvas == null)
+            {
+                canvasObj = new GameObject("UI_SplitScreenCanvas");
+                canvas = canvasObj.AddComponent<Canvas>();
+                canvas.renderMode = RenderMode.ScreenSpaceOverlay;
 
-            CanvasScaler scaler = canvasObj.AddComponent<CanvasScaler>();
-            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-            scaler.referenceResolution = new Vector2(1920, 1080);
-            scaler.matchWidthOrHeight = 0.5f;
+                CanvasScaler scaler = canvasObj.AddComponent<CanvasScaler>();
+                scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+                scaler.referenceResolution = new Vector2(1920, 1080);
+                scaler.matchWidthOrHeight = 0.5f;
 
-            canvasObj.AddComponent<GraphicRaycaster>();
-            UIController uiController = canvasObj.AddComponent<UIController>();
+                canvasObj.AddComponent<GraphicRaycaster>();
+                canvasObj.AddComponent<UIController>();
+            }
+            else
+            {
+                canvasObj = canvas.gameObject;
+            }
 
-            Font defaultFont = Resources.GetBuiltinResource<Font>("Arial.ttf");
+            UIController uiController = canvasObj.GetComponent<UIController>() ?? canvasObj.AddComponent<UIController>();
+            Font defaultFont = GetDefaultFont();
 
             // --- 1. Right Ultrasound Panel (38% width, right aligned) ---
+            Transform existingUsPanel = canvas.transform.Find("UltrasoundPanel");
+            if (existingUsPanel != null) DestroyImmediate(existingUsPanel.gameObject);
+
             GameObject usPanel = new GameObject("UltrasoundPanel");
             usPanel.transform.SetParent(canvas.transform, false);
             RectTransform usRect = usPanel.AddComponent<RectTransform>();
@@ -209,34 +266,55 @@ namespace VirtualUltrasound.Bootstrap
             usRect.offsetMax = Vector2.zero;
 
             Image usPanelBg = usPanel.AddComponent<Image>();
-            usPanelBg.color = new Color(0.04f, 0.05f, 0.07f, 1.0f); // Deep dark ultrasound monitor bezel
+            usPanelBg.color = new Color(0.07f, 0.09f, 0.13f, 1.0f); // Sleek medical ultrasound console frame
 
-            // Title
-            GameObject titleObj = CreateText("PanelTitle", usPanel.transform, "LIVE 2D ULTRASOUND VIEW", 18, FontStyle.Bold, TextAnchor.MiddleCenter, defaultFont);
+            // Title Banner Box
+            GameObject titleBox = new GameObject("TitleBox");
+            titleBox.transform.SetParent(usPanel.transform, false);
+            RectTransform titleBoxRect = titleBox.AddComponent<RectTransform>();
+            titleBoxRect.anchorMin = new Vector2(0.05f, 0.93f);
+            titleBoxRect.anchorMax = new Vector2(0.95f, 0.985f);
+            titleBoxRect.offsetMin = Vector2.zero;
+            titleBoxRect.offsetMax = Vector2.zero;
+            Image titleBoxBg = titleBox.AddComponent<Image>();
+            titleBoxBg.color = new Color(0.12f, 0.17f, 0.24f, 1.0f);
+
+            GameObject titleObj = CreateText("PanelTitle", titleBox.transform, "LIVE 2D ULTRASOUND VIEW", 16, FontStyle.Bold, TextAnchor.MiddleCenter, defaultFont);
             RectTransform titleRect = titleObj.GetComponent<RectTransform>();
-            titleRect.anchorMin = new Vector2(0f, 0.94f);
-            titleRect.anchorMax = new Vector2(1f, 0.99f);
+            titleRect.anchorMin = Vector2.zero;
+            titleRect.anchorMax = Vector2.one;
             titleRect.offsetMin = Vector2.zero;
             titleRect.offsetMax = Vector2.zero;
 
-            // Ultrasound RawImage Frame
+            // Ultrasound Display Frame (Medical CRT Border)
             GameObject usFrame = new GameObject("UltrasoundFrame");
             usFrame.transform.SetParent(usPanel.transform, false);
             RectTransform frameRect = usFrame.AddComponent<RectTransform>();
-            frameRect.anchorMin = new Vector2(0.08f, 0.28f);
-            frameRect.anchorMax = new Vector2(0.92f, 0.92f);
+            frameRect.anchorMin = new Vector2(0.06f, 0.32f);
+            frameRect.anchorMax = new Vector2(0.94f, 0.91f);
             frameRect.offsetMin = Vector2.zero;
             frameRect.offsetMax = Vector2.zero;
 
             Image frameBorder = usFrame.AddComponent<Image>();
-            frameBorder.color = new Color(0.15f, 0.20f, 0.28f, 1.0f);
+            frameBorder.color = new Color(0.16f, 0.22f, 0.30f, 1.0f); // Bezel
 
-            // RawImage
+            // Screen Inner Dark Background
+            GameObject screenInner = new GameObject("ScreenInner");
+            screenInner.transform.SetParent(usFrame.transform, false);
+            RectTransform innerRect = screenInner.AddComponent<RectTransform>();
+            innerRect.anchorMin = new Vector2(0.015f, 0.015f);
+            innerRect.anchorMax = new Vector2(0.985f, 0.985f);
+            innerRect.offsetMin = Vector2.zero;
+            innerRect.offsetMax = Vector2.zero;
+            Image innerBg = screenInner.AddComponent<Image>();
+            innerBg.color = new Color(0.02f, 0.02f, 0.03f, 1.0f); // Screen cavity
+
+            // Ultrasound RawImage
             GameObject rawImgObj = new GameObject("UltrasoundRawImage");
-            rawImgObj.transform.SetParent(usFrame.transform, false);
+            rawImgObj.transform.SetParent(screenInner.transform, false);
             RectTransform rawRect = rawImgObj.AddComponent<RectTransform>();
-            rawRect.anchorMin = new Vector2(0.02f, 0.02f);
-            rawRect.anchorMax = new Vector2(0.98f, 0.98f);
+            rawRect.anchorMin = Vector2.zero;
+            rawRect.anchorMax = Vector2.one;
             rawRect.offsetMin = Vector2.zero;
             rawRect.offsetMax = Vector2.zero;
 
@@ -249,34 +327,47 @@ namespace VirtualUltrasound.Bootstrap
             UltrasoundDisplay usDisplay = rawImgObj.AddComponent<UltrasoundDisplay>();
             usDisplay.BindSliceRenderer(sliceRenderer);
 
-            // Orientation marker dot (Top-left of US frame)
+            // Orientation Marker Dot (Top-Left of US frame)
             GameObject markerDot = new GameObject("OrientationMarkerDot");
             markerDot.transform.SetParent(rawImgObj.transform, false);
             RectTransform dotRect = markerDot.AddComponent<RectTransform>();
             dotRect.anchorMin = new Vector2(0.04f, 0.92f);
-            dotRect.anchorMax = new Vector2(0.08f, 0.96f);
+            dotRect.anchorMax = new Vector2(0.09f, 0.97f);
             dotRect.offsetMin = Vector2.zero;
             dotRect.offsetMax = Vector2.zero;
             Image dotImg = markerDot.AddComponent<Image>();
             dotImg.color = new Color(0.95f, 0.35f, 0.2f, 1.0f);
 
-            // Telemetry Text
-            GameObject telemetryObj = CreateText("TelemetryText", usPanel.transform, "Probe Pose: Loading...", 14, FontStyle.Normal, TextAnchor.UpperLeft, defaultFont);
+            // Telemetry Box
+            GameObject telBox = new GameObject("TelemetryBox");
+            telBox.transform.SetParent(usPanel.transform, false);
+            RectTransform telBoxRect = telBox.AddComponent<RectTransform>();
+            telBoxRect.anchorMin = new Vector2(0.06f, 0.12f);
+            telBoxRect.anchorMax = new Vector2(0.94f, 0.30f);
+            telBoxRect.offsetMin = Vector2.zero;
+            telBoxRect.offsetMax = Vector2.zero;
+            Image telBoxBg = telBox.AddComponent<Image>();
+            telBoxBg.color = new Color(0.11f, 0.15f, 0.21f, 1.0f);
+
+            GameObject telemetryObj = CreateText("TelemetryText", telBox.transform, "Probe Pose: Initializing...", 13, FontStyle.Normal, TextAnchor.UpperLeft, defaultFont);
             RectTransform telRect = telemetryObj.GetComponent<RectTransform>();
-            telRect.anchorMin = new Vector2(0.08f, 0.14f);
-            telRect.anchorMax = new Vector2(0.92f, 0.26f);
+            telRect.anchorMin = new Vector2(0.04f, 0.05f);
+            telRect.anchorMax = new Vector2(0.96f, 0.95f);
             telRect.offsetMin = Vector2.zero;
             telRect.offsetMax = Vector2.zero;
 
             // Performance Text
-            GameObject perfObj = CreateText("PerformanceText", usPanel.transform, "FPS: 60 | 128x128", 13, FontStyle.Italic, TextAnchor.LowerRight, defaultFont);
+            GameObject perfObj = CreateText("PerformanceText", usPanel.transform, "FPS: 60 | 128x128", 12, FontStyle.Italic, TextAnchor.MiddleRight, defaultFont);
             RectTransform perfRect = perfObj.GetComponent<RectTransform>();
-            perfRect.anchorMin = new Vector2(0.08f, 0.01f);
-            perfRect.anchorMax = new Vector2(0.92f, 0.05f);
+            perfRect.anchorMin = new Vector2(0.06f, 0.02f);
+            perfRect.anchorMax = new Vector2(0.94f, 0.08f);
             perfRect.offsetMin = Vector2.zero;
             perfRect.offsetMax = Vector2.zero;
 
-            // --- 2. Left HUD Overlay (3D View Controls & View Presets) ---
+            // --- 2. Left HUD Overlay (3D View Controls Guide) ---
+            Transform existingLeftHud = canvas.transform.Find("LeftHUD");
+            if (existingLeftHud != null) DestroyImmediate(existingLeftHud.gameObject);
+
             GameObject leftHud = new GameObject("LeftHUD");
             leftHud.transform.SetParent(canvas.transform, false);
             RectTransform leftRect = leftHud.AddComponent<RectTransform>();
@@ -286,25 +377,45 @@ namespace VirtualUltrasound.Bootstrap
             leftRect.offsetMax = Vector2.zero;
 
             // App Title Banner
-            GameObject headerObj = CreateText("AppTitle", leftHud.transform, "<b>VIRTUAL ULTRASOUND SIMULATOR</b>", 20, FontStyle.Bold, TextAnchor.UpperLeft, defaultFont);
+            GameObject titleBanner = new GameObject("TitleBanner");
+            titleBanner.transform.SetParent(leftHud.transform, false);
+            RectTransform bannerRect = titleBanner.AddComponent<RectTransform>();
+            bannerRect.anchorMin = new Vector2(0.03f, 0.92f);
+            bannerRect.anchorMax = new Vector2(0.65f, 0.98f);
+            bannerRect.offsetMin = Vector2.zero;
+            bannerRect.offsetMax = Vector2.zero;
+            Image bannerBg = titleBanner.AddComponent<Image>();
+            bannerBg.color = new Color(0.08f, 0.11f, 0.16f, 0.85f);
+
+            GameObject headerObj = CreateText("AppTitle", titleBanner.transform, "  <b>VIRTUAL ULTRASOUND SIMULATOR</b>", 18, FontStyle.Bold, TextAnchor.MiddleLeft, defaultFont);
             RectTransform headRect = headerObj.GetComponent<RectTransform>();
-            headRect.anchorMin = new Vector2(0.03f, 0.92f);
-            headRect.anchorMax = new Vector2(0.95f, 0.98f);
+            headRect.anchorMin = Vector2.zero;
+            headRect.anchorMax = Vector2.one;
             headRect.offsetMin = Vector2.zero;
             headRect.offsetMax = Vector2.zero;
 
             // Controls Guide Box
+            GameObject guideBox = new GameObject("GuideBox");
+            guideBox.transform.SetParent(leftHud.transform, false);
+            RectTransform guideBoxRect = guideBox.AddComponent<RectTransform>();
+            guideBoxRect.anchorMin = new Vector2(0.03f, 0.02f);
+            guideBoxRect.anchorMax = new Vector2(0.97f, 0.17f);
+            guideBoxRect.offsetMin = Vector2.zero;
+            guideBoxRect.offsetMax = Vector2.zero;
+            Image guideBg = guideBox.AddComponent<Image>();
+            guideBg.color = new Color(0.07f, 0.09f, 0.14f, 0.88f);
+
             string controlsString =
                 "<b>Interactive Controls:</b>\n" +
                 "• <b>Translate Probe:</b> <b>W/S</b> (Depth), <b>A/D</b> (Lateral), <b>Q/E</b> (Elevation) [Hold <b>Shift</b>: Fast]\n" +
                 "• <b>Rotate Probe:</b> <b>I/K</b> (Pitch), <b>J/L</b> (Yaw), <b>U/O</b> (Roll)\n" +
                 "• <b>Preset Views:</b> <b>1</b> Transverse | <b>2</b> Sagittal | <b>3</b> Coronal | <b>R</b> Reset Home\n" +
-                "• <b>3D Scene Camera:</b> <b>Right-Click Drag</b> (Orbit), <b>Middle-Click Drag</b> (Pan), <b>Scroll</b> (Zoom)";
+                "• <b>3D Viewport Camera:</b> <b>Right-Click Drag</b> (Orbit), <b>Middle-Click Drag</b> (Pan), <b>Scroll</b> (Zoom)";
 
-            GameObject guideObj = CreateText("ControlsGuide", leftHud.transform, controlsString, 13, FontStyle.Normal, TextAnchor.LowerLeft, defaultFont);
+            GameObject guideObj = CreateText("ControlsGuide", guideBox.transform, controlsString, 13, FontStyle.Normal, TextAnchor.MiddleLeft, defaultFont);
             RectTransform guideRect = guideObj.GetComponent<RectTransform>();
-            guideRect.anchorMin = new Vector2(0.03f, 0.02f);
-            guideRect.anchorMax = new Vector2(0.95f, 0.16f);
+            guideRect.anchorMin = new Vector2(0.02f, 0.05f);
+            guideRect.anchorMax = new Vector2(0.98f, 0.95f);
             guideRect.offsetMin = Vector2.zero;
             guideRect.offsetMax = Vector2.zero;
 
@@ -318,11 +429,11 @@ namespace VirtualUltrasound.Bootstrap
             obj.transform.SetParent(parent, false);
             Text t = obj.AddComponent<Text>();
             t.text = text;
-            t.font = font ?? Resources.GetBuiltinResource<Font>("Arial.ttf");
+            t.font = font ?? GetDefaultFont();
             t.fontSize = fontSize;
             t.fontStyle = style;
             t.alignment = alignment;
-            t.color = new Color(0.90f, 0.93f, 0.98f, 1.0f);
+            t.color = new Color(0.92f, 0.95f, 1.0f, 1.0f);
             t.supportRichText = true;
             return obj;
         }

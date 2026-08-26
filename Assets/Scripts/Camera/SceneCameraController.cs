@@ -10,7 +10,7 @@ namespace VirtualUltrasound.CameraControl
     {
         [Header("Target & Distance")]
         [SerializeField] private Vector3 targetPivot = Vector3.zero;
-        [SerializeField] private float distance = 0.45f;
+        [SerializeField] private float distance = 0.52f;
         [SerializeField] private float minDistance = 0.10f;
         [SerializeField] private float maxDistance = 1.20f;
 

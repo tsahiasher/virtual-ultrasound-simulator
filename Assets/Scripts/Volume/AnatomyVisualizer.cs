@@ -121,15 +121,8 @@ namespace VirtualUltrasound.Volume
 
         private Material CreateTransparentMaterial()
         {
-            Shader standardShader = Shader.Find("Standard") ?? Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Sprites/Default");
-            Material mat = new Material(standardShader);
-            mat.SetFloat("_Mode", 3); // Transparent mode for standard shader
-            mat.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
-            mat.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
-            mat.SetInt("_ZWrite", 0);
-            mat.DisableKeyword("_ALPHATEST_ON");
-            mat.EnableKeyword("_ALPHABLEND_ON");
-            mat.DisableKeyword("_ALPHAPREMULTIPLY_ON");
+            Shader shader = Shader.Find("Sprites/Default") ?? Shader.Find("UI/Default") ?? Shader.Find("Unlit/Transparent") ?? Shader.Find("Standard");
+            Material mat = new Material(shader);
             mat.renderQueue = 3000;
             return mat;
         }
@@ -139,7 +132,9 @@ namespace VirtualUltrasound.Volume
             MeshRenderer mr = obj.GetComponent<MeshRenderer>();
             if (mr != null)
             {
-                Material instanceMat = new Material(baseMat) { color = color };
+                Material instanceMat = new Material(baseMat);
+                instanceMat.color = color;
+                if (instanceMat.HasProperty("_Color")) instanceMat.SetColor("_Color", color);
                 mr.sharedMaterial = instanceMat;
             }
         }

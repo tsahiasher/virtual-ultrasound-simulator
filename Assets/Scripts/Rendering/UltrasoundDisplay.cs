@@ -59,6 +59,23 @@ namespace VirtualUltrasound.Rendering
             }
         }
 
+        private void Update()
+        {
+            if (sliceRenderer == null)
+            {
+                sliceRenderer = FindObjectOfType<SliceRenderer>();
+                if (sliceRenderer != null)
+                {
+                    BindSliceRenderer(sliceRenderer);
+                }
+            }
+
+            if (targetImage != null && sliceRenderer != null && sliceRenderer.SliceTexture != null && targetImage.texture != sliceRenderer.SliceTexture)
+            {
+                targetImage.texture = sliceRenderer.SliceTexture;
+            }
+        }
+
         private void HandleTextureUpdated(Texture2D texture)
         {
             if (targetImage != null && texture != null)

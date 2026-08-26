@@ -1,5 +1,10 @@
 # Project Progress Log
 
+**2026-08-26 — Split-screen UI layout polish, camera framing, and transparent materials (offline, code + tests). ✅ DONE**
+Enhanced dual-camera background clearer for split-screen layout, resolved transparent 3D materials with white texture backing in `ProbeVisualizer` and `AnatomyVisualizer`, implemented automatic telemetry text binding in `UIController`, added auto-binding in `UltrasoundDisplay`, and optimized default camera framing distance.
+- **Proof:** `dotnet test tests/VirtualUltrasound.Tests/VirtualUltrasound.Tests.csproj` -> 7 passed, 0 failed (Duration: 12ms); live 2D ultrasound cross-sections confirmed working in Unity Game view.
+- **Files Touched:** `Assets/Scripts/Bootstrap/SceneBootstrapper.cs`, `Assets/Scripts/Camera/SceneCameraController.cs`, `Assets/Scripts/Editor/SceneSetupMenu.cs`, `Assets/Scripts/Probe/ProbeVisualizer.cs`, `Assets/Scripts/Rendering/UltrasoundDisplay.cs`, `Assets/Scripts/UI/UIController.cs`, `Assets/Scripts/Volume/AnatomyVisualizer.cs`, `docs/PROGRESS.md`.
+
 **2026-08-26 — Unity Editor integration and scene bootstrapper enhancements (offline, code + tests). ✅ DONE**
 Added 1-click Editor scene setup menu (`Virtual Ultrasound > Setup Simulator Scene in Editor`), runtime auto-initialization hook (`RuntimeInitializeOnLoadMethod`), resolved physics module references and namespace imports in visualizers, and included Unity metadata and project settings.
 - **Proof:** `dotnet test tests/VirtualUltrasound.Tests/VirtualUltrasound.Tests.csproj` -> 7 passed, 0 failed (Duration: 15ms); clean compilation in Unity Editor.

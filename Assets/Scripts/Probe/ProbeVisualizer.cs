@@ -199,27 +199,30 @@ namespace VirtualUltrasound.Probe
 
         private Material CreateOpaqueMaterial(Color color)
         {
-            Shader shader = Shader.Find("Standard") ?? Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Sprites/Default");
-            Material mat = new Material(shader) { color = color };
+            Shader shader = Shader.Find("Sprites/Default") ?? Shader.Find("UI/Default") ?? Shader.Find("Standard");
+            Material mat = new Material(shader);
+            mat.color = color;
+            if (mat.HasProperty("_Color")) mat.SetColor("_Color", color);
             return mat;
         }
 
         private Material CreateUnlitMaterial(Color color)
         {
-            Shader shader = Shader.Find("Unlit/Color") ?? Shader.Find("Sprites/Default") ?? Shader.Find("Standard");
-            Material mat = new Material(shader) { color = color };
+            Shader shader = Shader.Find("Sprites/Default") ?? Shader.Find("UI/Default") ?? Shader.Find("Unlit/Color") ?? Shader.Find("Standard");
+            Material mat = new Material(shader);
+            mat.color = color;
+            if (mat.HasProperty("_Color")) mat.SetColor("_Color", color);
             return mat;
         }
 
         private Material CreateDoubleSidedTransparentMaterial(Color color)
         {
-            Shader shader = Shader.Find("Standard") ?? Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Sprites/Default");
-            Material mat = new Material(shader) { color = color };
-            mat.SetFloat("_Mode", 3); // Transparent
-            mat.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
-            mat.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
-            mat.SetInt("_ZWrite", 0);
-            mat.SetInt("_Cull", (int)UnityEngine.Rendering.CullMode.Off); // Double-sided
+            Shader shader = Shader.Find("Sprites/Default") ?? Shader.Find("UI/Default") ?? Shader.Find("Unlit/Transparent") ?? Shader.Find("Standard");
+            Material mat = new Material(shader);
+            mat.mainTexture = Texture2D.whiteTexture;
+            mat.color = color;
+            if (mat.HasProperty("_Color")) mat.SetColor("_Color", color);
+            if (mat.HasProperty("_Cull")) mat.SetInt("_Cull", (int)UnityEngine.Rendering.CullMode.Off);
             mat.renderQueue = 3050;
             return mat;
         }

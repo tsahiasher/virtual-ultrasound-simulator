@@ -40,10 +40,26 @@ namespace VirtualUltrasound.UI
             if (probeVisualizer == null) probeVisualizer = FindObjectOfType<ProbeVisualizer>();
             if (anatomyVisualizer == null) anatomyVisualizer = FindObjectOfType<AnatomyVisualizer>();
             if (sliceRenderer == null) sliceRenderer = FindObjectOfType<SliceRenderer>();
+
+            if (telemetryText == null || performanceText == null || controlsHelpText == null)
+            {
+                Text[] allTexts = FindObjectsOfType<Text>(true);
+                foreach (var t in allTexts)
+                {
+                    if (t.gameObject.name == "TelemetryText") telemetryText = t;
+                    else if (t.gameObject.name == "PerformanceText") performanceText = t;
+                    else if (t.gameObject.name == "ControlsGuide") controlsHelpText = t;
+                }
+            }
         }
 
         private void Update()
         {
+            if (probeGeometry == null || telemetryText == null)
+            {
+                FindReferences();
+            }
+
             UpdateFPS();
             UpdateTelemetry();
         }
