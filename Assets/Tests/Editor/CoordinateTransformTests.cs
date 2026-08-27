@@ -51,6 +51,44 @@ namespace VirtualUltrasound.Tests
         }
 
         [Test]
+        public void PolarToProbeSpace_And_ProbeSpaceToPolar_RoundTripIsExact()
+        {
+            float apexRadius = 0.040f;
+            float angleRad = 20f * Mathf.Deg2Rad;
+            float radius = 0.100f;
+
+            Vector3 pP = CoordinateTransform.PolarToProbeSpace(angleRad, radius, apexRadius);
+            CoordinateTransform.ProbeSpaceToPolar(pP, apexRadius, out float reconstructedAngle, out float reconstructedRadius);
+
+            Assert.AreEqual(angleRad, reconstructedAngle, 1e-4f);
+            Assert.AreEqual(radius, reconstructedRadius, 1e-4f);
+        }
+
+        [Test]
+        public void CurvilinearSector_RayAnglesAndBoundariesAreExact()
+        {
+            float sectorAngleDeg = 65f;
+            float apexRadius = 0.040f;
+            float maxDepth = 0.120f;
+
+            // Center ray (u=0.5)
+            Vector3 centerRay = CoordinateTransform.UVToCurvilinearProbeSpace(new Vector2(0.5f, 1.0f), sectorAngleDeg, apexRadius, maxDepth);
+            CoordinateTransform.ProbeSpaceToPolar(centerRay, apexRadius, out float cAngle, out float cRad);
+            Assert.AreEqual(0f, cAngle, 1e-4f);
+            Assert.AreEqual(apexRadius + maxDepth, cRad, 1e-4f);
+
+            // Left boundary ray (u=0.0)
+            Vector3 leftRay = CoordinateTransform.UVToCurvilinearProbeSpace(new Vector2(0.0f, 1.0f), sectorAngleDeg, apexRadius, maxDepth);
+            CoordinateTransform.ProbeSpaceToPolar(leftRay, apexRadius, out float lAngle, out _);
+            Assert.AreEqual(-32.5f * Mathf.Deg2Rad, lAngle, 1e-4f);
+
+            // Right boundary ray (u=1.0)
+            Vector3 rightRay = CoordinateTransform.UVToCurvilinearProbeSpace(new Vector2(1.0f, 1.0f), sectorAngleDeg, apexRadius, maxDepth);
+            CoordinateTransform.ProbeSpaceToPolar(rightRay, apexRadius, out float rAngle, out _);
+            Assert.AreEqual(32.5f * Mathf.Deg2Rad, rAngle, 1e-4f);
+        }
+
+        [Test]
         public void ProbeToWorld_And_WorldToProbe_RoundTripIsExact()
         {
             Vector3 probePos = new Vector3(0.15f, 0.22f, -0.05f);

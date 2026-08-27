@@ -5,7 +5,7 @@ namespace VirtualUltrasound.Core
     /// <summary>
     /// Pure mathematical coordinate transform utilities for the ultrasound simulation pipeline.
     /// Explicitly maps:
-    ///   Image UV (u, v) -> Probe Space (x_P, y_P, z_P) -> World Space (x_W, y_W, z_W) -> Volume Space (x_V, y_V, z_V)
+    ///   Scanline/Depth Polar (α, r) -> Probe Space (x_P, y_P, z_P) -> World Space (x_W, y_W, z_W) -> Volume Space (x_V, y_V, z_V)
     /// </summary>
     public static class CoordinateTransform
     {
@@ -37,21 +37,115 @@ namespace VirtualUltrasound.Core
         }
 
         /// <summary>
+        /// Converts polar scanline angle and radial depth into 3D Probe Space coordinates.
+        /// angleRad: Azimuthal ray angle relative to central beam axis (angle = 0 at center line).
+        /// radius: Distance from the virtual apex center of curvature (radius >= apexRadius).
+        /// apexRadius: Curvature radius of the convex probe face (R_c).
+        /// </summary>
+        public static Vector3 PolarToProbeSpace(float angleRad, float radius, float apexRadius)
+        {
+            float xP = radius * Mathf.Sin(angleRad);
+            float yP = 0f;
+            float zP = radius * Mathf.Cos(angleRad) - apexRadius;
+            return new Vector3(xP, yP, zP);
+        }
+
+        /// <summary>
+        /// Converts a 3D Probe Space point into polar ray coordinates (angle and radius relative to the virtual apex).
+        /// </summary>
+        public static void ProbeSpaceToPolar(Vector3 pointInProbeSpace, float apexRadius, out float angleRad, out float radius)
+        {
+            float zApex = pointInProbeSpace.z + apexRadius;
+            radius = Mathf.Sqrt((pointInProbeSpace.x * pointInProbeSpace.x) + (zApex * zApex));
+            angleRad = Mathf.Atan2(pointInProbeSpace.x, zApex);
+        }
+
+        /// <summary>
+        /// Checks whether a 3D point in Probe Space falls within the valid curvilinear ultrasound sector fan.
+        /// </summary>
+        public static bool IsInsideCurvilinearSector(Vector3 pointInProbeSpace, float sectorAngleDeg, float apexRadius, float maxDepth)
+        {
+            if (pointInProbeSpace.z < 0f || pointInProbeSpace.z > maxDepth)
+            {
+                return false;
+            }
+
+            ProbeSpaceToPolar(pointInProbeSpace, apexRadius, out float angleRad, out float radius);
+
+            float halfAngleRad = (sectorAngleDeg * 0.5f) * Mathf.Deg2Rad;
+            if (Mathf.Abs(angleRad) > halfAngleRad)
+            {
+                return false;
+            }
+
+            if (radius < apexRadius || radius > (apexRadius + maxDepth))
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
         /// Converts normalized UV coordinates [0..1] on a curvilinear/convex probe into Probe Space 3D coordinates.
-        /// sectorAngleDeg: total field of view angle (e.g. 60 deg).
-        /// apexRadius: radius of curvature of convex probe head.
+        /// sectorAngleDeg: total field of view angle (e.g. 65 deg).
+        /// apexRadius: radius of curvature of convex probe head (e.g. 0.04m).
         /// </summary>
         public static Vector3 UVToCurvilinearProbeSpace(Vector2 uv, float sectorAngleDeg, float apexRadius, float maxDepth)
         {
             float halfAngleRad = (sectorAngleDeg * 0.5f) * Mathf.Deg2Rad;
             float currentAngleRad = Mathf.Lerp(-halfAngleRad, halfAngleRad, uv.x);
-            float r = apexRadius + uv.y * maxDepth;
+            float r = apexRadius + (uv.y * maxDepth);
+            return PolarToProbeSpace(currentAngleRad, r, apexRadius);
+        }
 
-            // In probe space: lateral is X, depth is Z
-            float xP = r * Mathf.Sin(currentAngleRad);
-            float yP = 0f;
-            float zP = r * Mathf.Cos(currentAngleRad) - apexRadius;
-            return new Vector3(xP, yP, zP);
+        /// <summary>
+        /// Calculates the full lateral width and axial bounding dimensions of a curvilinear probe's sector fan.
+        /// </summary>
+        public static void GetSectorBoundingDimensions(
+            float sectorAngleDeg,
+            float apexRadius,
+            float maxDepth,
+            out float maxLateralWidth,
+            out float totalAxialDepth)
+        {
+            float halfAngleRad = (sectorAngleDeg * 0.5f) * Mathf.Deg2Rad;
+            float maxRadius = apexRadius + maxDepth;
+            maxLateralWidth = 2f * maxRadius * Mathf.Sin(halfAngleRad);
+            totalAxialDepth = maxDepth;
+        }
+
+        /// <summary>
+        /// Maps a 2D display pixel (x in [0..width-1], y in [0..height-1]) on a scan-converted Cartesian grid
+        /// into Probe Space, checking whether it falls within the authentic ultrasound sector fan.
+        /// row y=0 is probe face at top, row y=height-1 is deep tissue.
+        /// </summary>
+        public static bool DisplayPixelToProbeSpace(
+            int pixelX,
+            int pixelY,
+            int imageWidth,
+            int imageHeight,
+            float sectorAngleDeg,
+            float apexRadius,
+            float maxDepth,
+            out Vector3 pointInProbeSpace)
+        {
+            GetSectorBoundingDimensions(sectorAngleDeg, apexRadius, maxDepth, out float lateralSpan, out float axialDepth);
+
+            // Add slight margin so sector arc edges don't touch display borders
+            float marginFactor = 1.06f;
+            float effectiveLateralSpan = lateralSpan * marginFactor;
+
+            // Normalized coordinates across image: u in [-0.5, +0.5], v in [0, 1]
+            float u = imageWidth > 1 ? ((float)pixelX / (imageWidth - 1)) - 0.5f : 0f;
+            float v = imageHeight > 1 ? (float)pixelY / (imageHeight - 1) : 0f;
+
+            float xP = u * effectiveLateralSpan;
+            float zP = v * axialDepth;
+
+            pointInProbeSpace = new Vector3(xP, 0f, zP);
+
+            return IsInsideCurvilinearSector(pointInProbeSpace, sectorAngleDeg, apexRadius, maxDepth);
         }
 
         /// <summary>

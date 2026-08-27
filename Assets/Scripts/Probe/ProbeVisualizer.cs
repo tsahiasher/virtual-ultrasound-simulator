@@ -1,11 +1,12 @@
+using System.Collections.Generic;
 using UnityEngine;
 using VirtualUltrasound.Core;
 
 namespace VirtualUltrasound.Probe
 {
     /// <summary>
-    /// Visualizes the ultrasound probe body, imaging plane quad, wireframe boundary, and normal vector in 3D.
-    /// Provides clear visual verification that the imaging plane moves rigidly with the probe.
+    /// Visualizes the ultrasound probe body, sector fan / imaging plane mesh, wireframe perimeter, and normal vector in 3D.
+    /// Provides clear visual verification that the ultrasound field of view moves rigidly with the probe.
     /// </summary>
     [ExecuteAlways]
     [RequireComponent(typeof(ProbeGeometry))]
@@ -31,6 +32,12 @@ namespace VirtualUltrasound.Probe
         private MeshFilter planeMeshFilter;
         private MeshRenderer planeMeshRenderer;
         private LineRenderer borderLineRenderer;
+
+        // Reusable mesh generation buffers (zero allocations in update)
+        private List<Vector3> meshVertices = new List<Vector3>(64);
+        private List<int> meshTriangles = new List<int>(256);
+        private List<Vector2> meshUvs = new List<Vector2>(64);
+        private List<Vector3> borderPoints = new List<Vector3>(64);
 
         public bool ShowImagingPlane
         {
@@ -101,12 +108,16 @@ namespace VirtualUltrasound.Probe
             Material bodyMat = CreateOpaqueMaterial(probeBodyColor);
             Material notchMat = CreateOpaqueMaterial(markerDotColor);
 
+            float headWidth = probeGeometry.Type == ProbeType.Linear
+                ? probeGeometry.ApertureWidth * 1.1f
+                : 2f * probeGeometry.ConvexRadius * Mathf.Sin(probeGeometry.SectorAngleDegrees * 0.5f * Mathf.Deg2Rad) * 1.15f;
+
             // 1. Transducer Head / Acoustic lens (box near apex)
             GameObject head = GameObject.CreatePrimitive(PrimitiveType.Cube);
             head.name = "TransducerHead";
             head.transform.SetParent(bodyRoot.transform, false);
             head.transform.localPosition = new Vector3(0f, 0f, -0.015f);
-            head.transform.localScale = new Vector3(probeGeometry.ApertureWidth * 1.05f, 0.022f, 0.030f);
+            head.transform.localScale = new Vector3(Mathf.Max(0.04f, headWidth), 0.022f, 0.030f);
             RemoveCollider(head);
             ApplyMaterial(head, bodyMat);
 
@@ -124,8 +135,7 @@ namespace VirtualUltrasound.Probe
             GameObject notch = GameObject.CreatePrimitive(PrimitiveType.Sphere);
             notch.name = "OrientationMarkerDot";
             notch.transform.SetParent(bodyRoot.transform, false);
-            // Placed at negative X (left side) near the probe face
-            notch.transform.localPosition = new Vector3(-probeGeometry.ApertureWidth * 0.45f, 0.012f, -0.012f);
+            notch.transform.localPosition = new Vector3(-headWidth * 0.45f, 0.012f, -0.010f);
             notch.transform.localScale = Vector3.one * 0.007f;
             RemoveCollider(notch);
             ApplyMaterial(notch, notchMat);
@@ -145,7 +155,6 @@ namespace VirtualUltrasound.Probe
             borderLineRenderer = planeObj.AddComponent<LineRenderer>();
             borderLineRenderer.useWorldSpace = false;
             borderLineRenderer.loop = true;
-            borderLineRenderer.positionCount = 4;
             borderLineRenderer.startWidth = 0.002f;
             borderLineRenderer.endWidth = 0.002f;
             borderLineRenderer.sharedMaterial = CreateUnlitMaterial(borderColor);
@@ -158,8 +167,6 @@ namespace VirtualUltrasound.Probe
         {
             if (planeMeshFilter == null || probeGeometry == null) return;
 
-            probeGeometry.GetPlaneCornersProbeSpace(out Vector3 tl, out Vector3 tr, out Vector3 br, out Vector3 bl);
-
             Mesh mesh = planeMeshFilter.sharedMesh;
             if (mesh == null)
             {
@@ -167,33 +174,76 @@ namespace VirtualUltrasound.Probe
                 planeMeshFilter.sharedMesh = mesh;
             }
 
-            Vector3[] vertices = new Vector3[] { tl, tr, br, bl };
-            int[] triangles = new int[]
+            meshVertices.Clear();
+            meshTriangles.Clear();
+            meshUvs.Clear();
+            borderPoints.Clear();
+
+            int arcSegments = 24; // 24 segments for smooth fan curvature
+
+            probeGeometry.GetSectorBoundaryPoints(arcSegments, out Vector3[] topArc, out Vector3[] bottomArc);
+
+            // Generate quad strips between topArc and bottomArc
+            // Vertices: [0..arcSegments-1] = topArc, [arcSegments..2*arcSegments-1] = bottomArc
+            for (int i = 0; i < arcSegments; i++)
             {
-                0, 1, 2,
-                0, 2, 3,
-                // double sided
-                2, 1, 0,
-                3, 2, 0
-            };
-            Vector2[] uvs = new Vector2[]
+                meshVertices.Add(topArc[i]);
+                meshUvs.Add(new Vector2((float)i / (arcSegments - 1), 0f));
+            }
+            for (int i = 0; i < arcSegments; i++)
             {
-                new Vector2(0f, 0f),
-                new Vector2(1f, 0f),
-                new Vector2(1f, 1f),
-                new Vector2(0f, 1f)
-            };
+                meshVertices.Add(bottomArc[i]);
+                meshUvs.Add(new Vector2((float)i / (arcSegments - 1), 1f));
+            }
+
+            // Triangulate sector strip
+            for (int i = 0; i < arcSegments - 1; i++)
+            {
+                int t0 = i;
+                int t1 = i + 1;
+                int b0 = arcSegments + i;
+                int b1 = arcSegments + i + 1;
+
+                // Front face
+                meshTriangles.Add(t0);
+                meshTriangles.Add(t1);
+                meshTriangles.Add(b0);
+
+                meshTriangles.Add(t1);
+                meshTriangles.Add(b1);
+                meshTriangles.Add(b0);
+
+                // Back face (double-sided)
+                meshTriangles.Add(b0);
+                meshTriangles.Add(t1);
+                meshTriangles.Add(t0);
+
+                meshTriangles.Add(b0);
+                meshTriangles.Add(b1);
+                meshTriangles.Add(t1);
+            }
 
             mesh.Clear();
-            mesh.vertices = vertices;
-            mesh.triangles = triangles;
-            mesh.uv = uvs;
+            mesh.SetVertices(meshVertices);
+            mesh.SetTriangles(meshTriangles, 0);
+            mesh.SetUVs(0, meshUvs);
             mesh.RecalculateNormals();
             mesh.RecalculateBounds();
 
+            // Trace perimeter loop for LineRenderer: topArc (L->R) -> bottomArc (R->L)
             if (borderLineRenderer != null)
             {
-                borderLineRenderer.SetPositions(new Vector3[] { tl, tr, br, bl });
+                for (int i = 0; i < arcSegments; i++)
+                {
+                    borderPoints.Add(topArc[i]);
+                }
+                for (int i = arcSegments - 1; i >= 0; i--)
+                {
+                    borderPoints.Add(bottomArc[i]);
+                }
+
+                borderLineRenderer.positionCount = borderPoints.Count;
+                borderLineRenderer.SetPositions(borderPoints.ToArray());
             }
         }
 
@@ -266,6 +316,19 @@ namespace VirtualUltrasound.Probe
             {
                 Gizmos.color = beamColor;
                 Gizmos.DrawRay(origin, probeGeometry.BeamDirection * probeGeometry.MaxDepth);
+            }
+
+            // Draw Sector Scanline rays in Gizmos
+            if (probeGeometry.Type == ProbeType.Curvilinear)
+            {
+                Gizmos.color = new Color(0.2f, 0.9f, 0.9f, 0.35f);
+                int rayCount = 7;
+                for (int i = 0; i < rayCount; i++)
+                {
+                    int lineIdx = (int)Mathf.Lerp(0, probeGeometry.ScanLines - 1, (float)i / (rayCount - 1));
+                    probeGeometry.GetScanLineRayWorldSpace(lineIdx, out Vector3 rOrigin, out Vector3 rDir);
+                    Gizmos.DrawRay(rOrigin, rDir * probeGeometry.MaxDepth);
+                }
             }
         }
     }

@@ -122,8 +122,15 @@ namespace UnityEngine
 
         public static float Clamp01(float value) => Math.Clamp(value, 0f, 1f);
         public static float Clamp(float value, float min, float max) => Math.Clamp(value, min, max);
+        public static int Clamp(int value, int min, int max) => Math.Clamp(value, min, max);
         public static float Max(float a, float b) => MathF.Max(a, b);
+        public static int Max(int a, int b) => Math.Max(a, b);
         public static float Min(float a, float b) => MathF.Min(a, b);
+        public static int Min(int a, int b) => Math.Min(a, b);
+        public static float Atan2(float y, float x) => MathF.Atan2(y, x);
+        public static float Abs(float f) => MathF.Abs(f);
+        public static float Round(float f) => MathF.Round(f);
+        public static bool Approximately(float a, float b) => MathF.Abs(b - a) < MathF.Max(1e-6f * MathF.Max(MathF.Abs(a), MathF.Abs(b)), 1e-5f);
         public static float Sqrt(float f) => MathF.Sqrt(f);
         public static float Sin(float f) => MathF.Sin(f);
         public static float Cos(float f) => MathF.Cos(f);

@@ -21,6 +21,7 @@
     <Compile Include="..\..\Assets\Scripts\Core\CoordinateTransform.cs" Link="Core\CoordinateTransform.cs" />
     <Compile Include="..\..\Assets\Scripts\Core\VolumeTypes.cs" Link="Core\VolumeTypes.cs" />
     <Compile Include="..\..\Assets\Scripts\Core\SliceBuffer.cs" Link="Core\SliceBuffer.cs" />
+    <Compile Include="..\..\Assets\Scripts\Core\PolarBuffer.cs" Link="Core\PolarBuffer.cs" />
     <Compile Include="..\..\Assets\Scripts\Core\IVolumeData.cs" Link="Core\IVolumeData.cs" />
     <Compile Include="..\..\Assets\Scripts\Core\IVolumeSampler.cs" Link="Core\IVolumeSampler.cs" />
     <Compile Include="..\..\Assets\Scripts\Core\ISliceGenerator.cs" Link="Core\ISliceGenerator.cs" />

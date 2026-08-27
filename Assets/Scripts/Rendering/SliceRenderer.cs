@@ -8,7 +8,10 @@ using VirtualUltrasound.Volume;
 namespace VirtualUltrasound.Rendering
 {
     /// <summary>
-    /// Coordinates slice generation between probe pose and volume sampler, managing the Texture2D output.
+    /// Coordinates the two-stage slice generation pipeline between probe pose and volume sampler:
+    ///   Stage 1: Polar Acoustic Acquisition (ScanLines x SamplesPerScanLine volume samples)
+    ///   Stage 2: Cartesian Scan Conversion (PolarBuffer -> SliceBuffer / Texture2D)
+    /// Manages independent acquisition and display buffers with dynamic runtime resizing.
     /// </summary>
     public class SliceRenderer : MonoBehaviour
     {
@@ -16,21 +19,36 @@ namespace VirtualUltrasound.Rendering
         [SerializeField] private ProbeGeometry probeGeometry;
         [SerializeField] private ProceduralVolumeSampler volumeSampler;
 
-        [Header("Sampling Resolution")]
-        [SerializeField] private int sliceWidth = 128;
-        [SerializeField] private int sliceHeight = 128;
+        [Header("Display Resolution (Output Texture)")]
+        [Tooltip("Width of Cartesian output display bitmap (independent of acquisition ray count).")]
+        [Range(32, 1024)]
+        [SerializeField] private int sliceWidth = 256;
+        [Tooltip("Height of Cartesian output display bitmap (independent of acquisition sample count).")]
+        [Range(32, 1024)]
+        [SerializeField] private int sliceHeight = 256;
 
-        [Header("Filtering")]
+        [Header("Filtering Options")]
+        [Tooltip("Interpolation algorithm applied during polar-to-Cartesian scan conversion.")]
+        [SerializeField] private ScanConversionFilterMode scanConversionFilter = ScanConversionFilterMode.Bilinear;
+        [Tooltip("Hardware texture filter applied when displaying texture on UI.")]
         [SerializeField] private FilterMode textureFilterMode = FilterMode.Bilinear;
 
         private Texture2D sliceTexture;
         private SliceBuffer sliceBuffer;
+        private PolarBuffer polarBuffer;
         private ISliceGenerator sliceGenerator;
-        private Stopwatch stopwatch = new Stopwatch();
+
+        private Stopwatch totalStopwatch = new Stopwatch();
+        private Stopwatch stageStopwatch = new Stopwatch();
 
         public Texture2D SliceTexture => sliceTexture;
         public SliceBuffer SliceBuffer => sliceBuffer;
+        public PolarBuffer PolarBuffer => polarBuffer;
+
         public float LastRenderTimeMs { get; private set; }
+        public float LastAcquisitionTimeMs { get; private set; }
+        public float LastScanConvertTimeMs { get; private set; }
+        public int LastAcquisitionSamplesCount => polarBuffer != null ? polarBuffer.TotalSamples : 0;
 
         public event Action<Texture2D> OnTextureUpdated;
 
@@ -60,13 +78,27 @@ namespace VirtualUltrasound.Rendering
             }
         }
 
+        public ScanConversionFilterMode ScanConversionFilter
+        {
+            get => scanConversionFilter;
+            set => scanConversionFilter = value;
+        }
+
         private void Awake()
         {
             if (probeGeometry == null) probeGeometry = FindObjectOfType<ProbeGeometry>();
             if (volumeSampler == null) volumeSampler = FindObjectOfType<ProceduralVolumeSampler>();
 
             sliceGenerator = new CPUSliceGenerator();
-            RecreateTextureAndBuffer();
+            EnsureBuffersAllocated();
+        }
+
+        private void OnValidate()
+        {
+            if (Application.isPlaying)
+            {
+                EnsureBuffersAllocated();
+            }
         }
 
         public void SetGenerator(ISliceGenerator generator)
@@ -82,6 +114,29 @@ namespace VirtualUltrasound.Rendering
         public void SetProbeGeometry(ProbeGeometry geometry)
         {
             probeGeometry = geometry;
+            EnsureBuffersAllocated();
+        }
+
+        public void EnsureBuffersAllocated()
+        {
+            int reqLines = probeGeometry != null ? probeGeometry.ScanLines : 128;
+            int reqSamples = probeGeometry != null ? probeGeometry.SamplesPerScanLine : 128;
+
+            // 1. Stage 1 Polar Buffer
+            if (polarBuffer == null)
+            {
+                polarBuffer = new PolarBuffer(reqLines, reqSamples);
+            }
+            else if (polarBuffer.Lines != reqLines || polarBuffer.Samples != reqSamples)
+            {
+                polarBuffer.Resize(reqLines, reqSamples);
+            }
+
+            // 2. Stage 2 Display SliceBuffer & Texture2D
+            if (sliceBuffer == null || sliceBuffer.Width != sliceWidth || sliceBuffer.Height != sliceHeight || sliceTexture == null)
+            {
+                RecreateTextureAndBuffer();
+            }
         }
 
         public void RecreateTextureAndBuffer()
@@ -113,37 +168,61 @@ namespace VirtualUltrasound.Rendering
 
         private void LateUpdate()
         {
+            EnsureBuffersAllocated();
             RenderSlice();
         }
 
         /// <summary>
-        /// Renders a new 2D ultrasound slice synchronously and updates the texture.
+        /// Executes the two-stage slice generation pipeline synchronously:
+        ///   1. Stage 1 Polar Acoustic Acquisition (queries 3D volume at ScanLines x SamplesPerScanLine points)
+        ///   2. Stage 2 Cartesian Scan Conversion (interpolates PolarBuffer into SliceBuffer)
         /// </summary>
         public void RenderSlice()
         {
-            if (probeGeometry == null || volumeSampler == null || sliceGenerator == null || sliceBuffer == null || sliceTexture == null)
+            if (probeGeometry == null || volumeSampler == null || sliceGenerator == null || sliceBuffer == null || sliceTexture == null || polarBuffer == null)
             {
                 return;
             }
 
-            stopwatch.Restart();
+            totalStopwatch.Restart();
 
-            sliceGenerator.GenerateSlice(
+            // --- STAGE 1: Polar Acoustic Acquisition ---
+            stageStopwatch.Restart();
+            sliceGenerator.AcquirePolarData(
                 probeGeometry.Origin,
                 probeGeometry.Orientation,
                 probeGeometry.ApertureWidth,
                 probeGeometry.MaxDepth,
                 probeGeometry.Type,
+                probeGeometry.SectorAngleDegrees,
+                probeGeometry.ConvexRadius,
                 volumeSampler,
-                sliceBuffer
+                polarBuffer
             );
+            stageStopwatch.Stop();
+            LastAcquisitionTimeMs = (float)stageStopwatch.Elapsed.TotalMilliseconds;
+
+            // --- STAGE 2: Cartesian Scan Conversion ---
+            stageStopwatch.Restart();
+            sliceGenerator.ScanConvert(
+                probeGeometry.ApertureWidth,
+                probeGeometry.MaxDepth,
+                probeGeometry.Type,
+                probeGeometry.SectorAngleDegrees,
+                probeGeometry.ConvexRadius,
+                polarBuffer,
+                sliceBuffer,
+                scanConversionFilter
+            );
+            stageStopwatch.Stop();
+            LastScanConvertTimeMs = (float)stageStopwatch.Elapsed.TotalMilliseconds;
 
             // Upload pixel buffer to GPU texture
             sliceTexture.SetPixels32(sliceBuffer.Pixels);
             sliceTexture.Apply(false);
 
-            stopwatch.Stop();
-            LastRenderTimeMs = (float)stopwatch.Elapsed.TotalMilliseconds;
+            totalStopwatch.Stop();
+            LastRenderTimeMs = (float)totalStopwatch.Elapsed.TotalMilliseconds;
 
             OnTextureUpdated?.Invoke(sliceTexture);
         }

@@ -78,24 +78,32 @@ namespace VirtualUltrasound.UI
                 fpsUpdateTimer = 0.5f;
             }
 
-            if (performanceText != null && sliceRenderer != null)
+            if (performanceText != null && sliceRenderer != null && probeGeometry != null)
             {
-                performanceText.text = $"FPS: {currentFps:F0} | Slice: {sliceRenderer.SliceWidth}x{sliceRenderer.SliceHeight} | Time: {sliceRenderer.LastRenderTimeMs:F1}ms";
+                performanceText.text = $"FPS: {currentFps:F0} | Acq: {probeGeometry.ScanLines}x{probeGeometry.SamplesPerScanLine} | Disp: {sliceRenderer.SliceWidth}x{sliceRenderer.SliceHeight} | {sliceRenderer.LastRenderTimeMs:F1}ms";
             }
         }
 
         private void UpdateTelemetry()
         {
-            if (telemetryText != null && probeGeometry != null)
+            if (telemetryText != null && probeGeometry != null && sliceRenderer != null)
             {
                 Vector3 pos = probeGeometry.Origin * 1000f; // in millimeters for clinical realism
                 Vector3 rot = probeGeometry.Orientation.eulerAngles;
 
+                string geomDetails = probeGeometry.Type == Core.ProbeType.Curvilinear
+                    ? $"Optics: <b>Convex Sector</b> (FOV {probeGeometry.SectorAngleDegrees:F0}°, Depth {probeGeometry.MaxDepth * 1000f:F0}mm, R={probeGeometry.ConvexRadius * 1000f:F0}mm)"
+                    : $"Optics: <b>Linear Array</b> (Aperture {probeGeometry.ApertureWidth * 1000f:F0}mm, Depth {probeGeometry.MaxDepth * 1000f:F0}mm)";
+
+                int totalSamples = probeGeometry.ScanLines * probeGeometry.SamplesPerScanLine;
+
                 telemetryText.text =
                     $"<b>Probe Pose:</b>\n" +
-                    $"Pos (mm): X={pos.x:F1} Y={pos.y:F1} Z={pos.z:F1}\n" +
-                    $"Rot (deg): Pitch={rot.x:F1}° Yaw={rot.y:F1}° Roll={rot.z:F1}°\n" +
-                    $"Aperture: {probeGeometry.ApertureWidth * 1000f:F0}mm | Depth: {probeGeometry.MaxDepth * 1000f:F0}mm";
+                    $"Pos: ({pos.x:F1}, {pos.y:F1}, {pos.z:F1}) mm\n" +
+                    $"Rot: P={rot.x:F0}° Y={rot.y:F0}° R={rot.z:F0}°\n" +
+                    $"{geomDetails}\n" +
+                    $"<b>Acquisition:</b> {probeGeometry.ScanLines} lines × {probeGeometry.SamplesPerScanLine} samples = <b>{totalSamples:N0} 3D samples</b>\n" +
+                    $"<b>Display:</b> {sliceRenderer.SliceWidth}×{sliceRenderer.SliceHeight} ({sliceRenderer.ScanConversionFilter})";
             }
         }
 

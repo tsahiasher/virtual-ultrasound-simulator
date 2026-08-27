@@ -2,23 +2,26 @@
 
 ![Unity](https://img.shields.io/badge/Unity-2022.3%20%7C%206%20LTS-black?logo=unity)
 ![C#](https://img.shields.io/badge/C%23-10%2B-blue?logo=csharp)
-![Tests](https://img.shields.io/badge/Tests-7%20Passed%20(100%25)-brightgreen)
+![Tests](https://img.shields.io/badge/Tests-10%20Passed%20(100%25)-brightgreen)
 ![License](https://img.shields.io/badge/License-MIT-yellow)
 
 An interactive, real-time 3D desktop application built with **Unity** and **C#**. The simulator allows users to navigate a virtual ultrasound transducer over a 3D anatomical volume and observe the corresponding simulated 2D ultrasound cross-section in real time.
 
 ---
 
-## Key Features (Milestone 1)
+## Key Features (Phases 1 & 2)
 
+- **Authentic Convex Probe Geometry (Fan / Sector FOV)**: Accurate polar-to-Cartesian scan-converted sector display with physical acoustic black masking outside the sector fan.
+- **Configurable Probe Optics**: Interactive tuning of sector angle ($\theta_{\text{FOV}} \in [20^\circ, 120^\circ]$), imaging depth ($D \in [40\text{mm}, 240\text{mm}]$), and transducer curvature radius ($R_c = 40\text{mm}$).
+- **Seamless Probe Type Switching**: Real-time hotkey toggle (`T`) between Convex Sector and Linear Array probes.
 - **Split-Screen Desktop UI**: Interactive 3D scene viewport on the left (62% width), real-time 2D ultrasound monitor on the right (38% width).
 - **Rigid 6-DOF Probe Kinematics**: Isolated `ProbeController` supporting smooth translation, rotation (pitch, yaw, roll), and anatomical preset views (Transverse, Sagittal, Coronal).
 - **Procedural 3D Synthetic Anatomy**: Analytical multi-structure volume featuring a body ellipsoid, hyperechoic organ sphere, anechoic fluid cyst cavity, and fluid vessel cylinder.
-- **Strict 4-Tier Coordinate Pipeline**: Complete mathematical decoupling between Image UV coordinates, Probe Space, World Space, and Volume Space.
+- **Strict 4-Tier Coordinate Pipeline**: Complete mathematical decoupling between Polar Ray/Depth space, Probe Space, World Space, and Volume Space.
 - **Zero-Allocation CPU Slice Rasterizer**: High-performance reference pipeline running at 60+ FPS with zero per-frame managed heap allocations.
-- **3D Spatial Visualizers & Gizmos**: Transducer body with orientation notch, semi-transparent imaging plane quad, wireframe boundary, beam vector ray, and 3D organ meshes.
+- **3D Spatial Visualizers & Gizmos**: Transducer body with orientation notch, semi-transparent curved sector fan mesh, wireframe perimeter, beam vector ray, and 3D organ meshes.
 - **Self-Assembling Scene Bootstrapper**: 1-click execution in any fresh Unity scene without manual asset configuration.
-- **Deterministic Test Harness**: Standalone .NET test suite executable via CLI (`dotnet test`) and Unity EditMode test suite.
+- **Deterministic Test Harness**: Standalone .NET test suite executable via CLI (`dotnet test`) and Unity EditMode test suite with 10 comprehensive tests.
 
 ---
 
@@ -119,6 +122,16 @@ $$\text{Pixel }(i, j) \xrightarrow{\text{UV}} (u, v) \xrightarrow{T_{\text{Probe
 | **Sagittal View Preset** | `2` | — | Positions probe for longitudinal cross-section |
 | **Coronal View Preset** | `3` | — | Positions probe for side/coronal cross-section |
 | **Reset Home** | `R` | — | Resets probe to default home pose |
+
+### Probe Optics & Geometry Controls
+
+| Action | Key | Function |
+|---|---|---|
+| **Toggle Probe Type** | `T` | Switches between Convex (Curvilinear) Sector and Linear Array |
+| **Increase Depth** | `+` / `Keypad +` | Increases imaging depth (+10mm, up to 240mm) |
+| **Decrease Depth** | `-` / `Keypad -` | Decreases imaging depth (-10mm, down to 40mm) |
+| **Widen Sector FOV** | `]` | Increases field of view (+5°, up to 120°) |
+| **Narrow Sector FOV** | `[` | Decreases field of view (-5°, down to 25°) |
 
 ### 3D Scene Viewport Camera
 

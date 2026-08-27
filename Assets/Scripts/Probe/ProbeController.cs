@@ -142,6 +142,37 @@ namespace VirtualUltrasound.Probe
             if (Input.GetKeyDown(KeyCode.Alpha1)) SetTransverseView();
             if (Input.GetKeyDown(KeyCode.Alpha2)) SetSagittalView();
             if (Input.GetKeyDown(KeyCode.Alpha3)) SetCoronalView();
+
+            // 4. Probe Geometry Parameter Tuning Hotkeys
+            ProbeGeometry geom = GetComponent<ProbeGeometry>();
+            if (geom != null)
+            {
+                // T: Toggle Probe Type (Curvilinear / Linear)
+                if (Input.GetKeyDown(KeyCode.T))
+                {
+                    geom.Type = geom.Type == Core.ProbeType.Curvilinear ? Core.ProbeType.Linear : Core.ProbeType.Curvilinear;
+                }
+
+                // Depth adjustment (+ / -)
+                if (Input.GetKeyDown(KeyCode.Equals) || Input.GetKeyDown(KeyCode.KeypadPlus))
+                {
+                    geom.MaxDepth = Mathf.Min(0.240f, geom.MaxDepth + 0.010f);
+                }
+                if (Input.GetKeyDown(KeyCode.Minus) || Input.GetKeyDown(KeyCode.KeypadMinus))
+                {
+                    geom.MaxDepth = Mathf.Max(0.040f, geom.MaxDepth - 0.010f);
+                }
+
+                // FOV Sector Angle adjustment ([ / ])
+                if (Input.GetKeyDown(KeyCode.RightBracket))
+                {
+                    geom.SectorAngleDegrees = Mathf.Min(120f, geom.SectorAngleDegrees + 5f);
+                }
+                if (Input.GetKeyDown(KeyCode.LeftBracket))
+                {
+                    geom.SectorAngleDegrees = Mathf.Max(25f, geom.SectorAngleDegrees - 5f);
+                }
+            }
         }
     }
 }

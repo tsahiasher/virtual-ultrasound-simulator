@@ -33,6 +33,22 @@ namespace VirtualUltrasound.Core
     }
 
     /// <summary>
+    /// Filter mode applied during Cartesian scan conversion from polar acoustic buffer.
+    /// </summary>
+    public enum ScanConversionFilterMode
+    {
+        /// <summary>
+        /// Smooth bilinear interpolation between adjacent scan lines and depth samples.
+        /// </summary>
+        Bilinear = 0,
+
+        /// <summary>
+        /// Nearest-neighbor sampling (exposes raw ray and sample discretization).
+        /// </summary>
+        NearestNeighbor = 1
+    }
+
+    /// <summary>
     /// Represents the sample result at a specific spatial coordinate within the volume.
     /// </summary>
     [Serializable]

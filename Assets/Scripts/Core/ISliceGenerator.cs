@@ -4,27 +4,55 @@ namespace VirtualUltrasound.Core
 {
     /// <summary>
     /// Contract for generating 2D ultrasound slice data from probe pose and volume data.
-    /// Can be implemented on CPU (reference) or GPU (compute shader / fragment shader).
+    /// Strictly decoupled into:
+    ///   Stage 1: Polar Acoustic Acquisition (ScanLines x SamplesPerScanLine volume queries)
+    ///   Stage 2: Cartesian Scan Conversion (PolarBuffer -> SliceBuffer / Texture2D)
     /// </summary>
     public interface ISliceGenerator
     {
         /// <summary>
-        /// Generates a 2D slice into the target SliceBuffer based on probe parameters and volume sampler.
+        /// Stage 1: Samples the 3D volume strictly along discrete acoustic rays into a PolarBuffer.
+        /// Performs exactly ScanLines x SamplesPerScanLine volume queries.
         /// </summary>
-        /// <param name="probePos">World-space position of the probe apex.</param>
-        /// <param name="probeRot">World-space rotation of the probe.</param>
-        /// <param name="apertureWidth">Aperture width in meters.</param>
-        /// <param name="maxDepth">Imaging depth in meters.</param>
-        /// <param name="probeType">Linear or Curvilinear probe mode.</param>
-        /// <param name="sampler">Volume sampler providing 3D tissue/intensity queries.</param>
-        /// <param name="outputBuffer">Pre-allocated target buffer to write pixels into.</param>
+        void AcquirePolarData(
+            Vector3 probePos,
+            Quaternion probeRot,
+            float apertureWidth,
+            float maxDepth,
+            ProbeType probeType,
+            float sectorAngleDeg,
+            float apexRadius,
+            IVolumeSampler sampler,
+            PolarBuffer polarBuffer);
+
+        /// <summary>
+        /// Stage 2: Converts the polar acoustic buffer into a Cartesian display image with sector masking.
+        /// Performs zero 3D volume queries.
+        /// </summary>
+        void ScanConvert(
+            float apertureWidth,
+            float maxDepth,
+            ProbeType probeType,
+            float sectorAngleDeg,
+            float apexRadius,
+            PolarBuffer polarBuffer,
+            SliceBuffer outputBuffer,
+            ScanConversionFilterMode filterMode = ScanConversionFilterMode.Bilinear);
+
+        /// <summary>
+        /// Executes both Stage 1 and Stage 2 sequentially.
+        /// </summary>
         void GenerateSlice(
             Vector3 probePos,
             Quaternion probeRot,
             float apertureWidth,
             float maxDepth,
             ProbeType probeType,
+            float sectorAngleDeg,
+            float apexRadius,
             IVolumeSampler sampler,
-            SliceBuffer outputBuffer);
+            PolarBuffer polarBuffer,
+            SliceBuffer outputBuffer,
+            ScanConversionFilterMode filterMode = ScanConversionFilterMode.Bilinear);
     }
 }
