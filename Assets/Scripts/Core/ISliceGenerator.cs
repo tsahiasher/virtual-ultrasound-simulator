@@ -26,6 +26,21 @@ namespace VirtualUltrasound.Core
             PolarBuffer polarBuffer);
 
         /// <summary>
+        /// Stage 1 with B-mode ultrasound acoustic appearance model.
+        /// </summary>
+        void AcquirePolarData(
+            Vector3 probePos,
+            Quaternion probeRot,
+            float apertureWidth,
+            float maxDepth,
+            ProbeType probeType,
+            float sectorAngleDeg,
+            float apexRadius,
+            IVolumeSampler sampler,
+            PolarBuffer polarBuffer,
+            UltrasoundAppearanceSettings appearance);
+
+        /// <summary>
         /// Stage 2: Converts the polar acoustic buffer into a Cartesian display image with sector masking.
         /// Performs zero 3D volume queries.
         /// </summary>
@@ -40,7 +55,7 @@ namespace VirtualUltrasound.Core
             ScanConversionFilterMode filterMode = ScanConversionFilterMode.Bilinear);
 
         /// <summary>
-        /// Executes both Stage 1 and Stage 2 sequentially.
+        /// Executes both Stage 1 and Stage 2 sequentially with default/raw appearance.
         /// </summary>
         void GenerateSlice(
             Vector3 probePos,
@@ -53,6 +68,23 @@ namespace VirtualUltrasound.Core
             IVolumeSampler sampler,
             PolarBuffer polarBuffer,
             SliceBuffer outputBuffer,
+            ScanConversionFilterMode filterMode = ScanConversionFilterMode.Bilinear);
+
+        /// <summary>
+        /// Executes both Stage 1 and Stage 2 sequentially with B-mode ultrasound appearance.
+        /// </summary>
+        void GenerateSlice(
+            Vector3 probePos,
+            Quaternion probeRot,
+            float apertureWidth,
+            float maxDepth,
+            ProbeType probeType,
+            float sectorAngleDeg,
+            float apexRadius,
+            IVolumeSampler sampler,
+            PolarBuffer polarBuffer,
+            SliceBuffer outputBuffer,
+            UltrasoundAppearanceSettings appearance,
             ScanConversionFilterMode filterMode = ScanConversionFilterMode.Bilinear);
     }
 }

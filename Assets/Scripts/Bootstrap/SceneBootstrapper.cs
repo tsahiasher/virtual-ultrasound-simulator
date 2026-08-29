@@ -109,6 +109,12 @@ namespace VirtualUltrasound.Bootstrap
                 anatomy = anatObj.AddComponent<SyntheticAnatomyVolume>();
                 anatObj.AddComponent<AnatomyVisualizer>();
             }
+
+            if (anatomy.GetComponent<GPUVolumeData>() == null)
+            {
+                anatomy.gameObject.AddComponent<GPUVolumeData>();
+            }
+
             return anatomy;
         }
 
@@ -133,6 +139,7 @@ namespace VirtualUltrasound.Bootstrap
                 probeObj.transform.rotation = Quaternion.Euler(90f, 0f, 0f);
 
                 probe = probeObj.AddComponent<ProbeGeometry>();
+                probe.SamplesPerScanLine = 1024;
                 probeObj.AddComponent<ProbeController>();
                 probeObj.AddComponent<ProbeVisualizer>();
             }
@@ -148,9 +155,22 @@ namespace VirtualUltrasound.Bootstrap
                 renderer = rendObj.AddComponent<SliceRenderer>();
                 renderer.SetProbeGeometry(probe);
                 renderer.SetVolumeSampler(sampler);
-                renderer.SliceWidth = 128;
-                renderer.SliceHeight = 128;
+                renderer.SliceWidth = 512;
+                renderer.SliceHeight = 512;
             }
+
+            GPUVolumeData gpuVol = FindObjectOfType<GPUVolumeData>();
+            if (gpuVol != null)
+            {
+                renderer.SetGPUVolumeData(gpuVol);
+            }
+
+            ComputeShader cs = Resources.Load<ComputeShader>("UltrasoundPipeline");
+            if (cs != null)
+            {
+                renderer.SetComputeShader(cs);
+            }
+
             return renderer;
         }
 
@@ -409,7 +429,7 @@ namespace VirtualUltrasound.Bootstrap
                 "<b>Interactive Controls:</b>\n" +
                 "• <b>Translate Probe:</b> <b>W/S</b> (Depth), <b>A/D</b> (Lateral), <b>Q/E</b> (Elevation) [Hold <b>Shift</b>: Fast]\n" +
                 "• <b>Rotate Probe:</b> <b>I/K</b> (Pitch), <b>J/L</b> (Yaw), <b>U/O</b> (Roll) | <b>1/2/3</b> Views | <b>R</b> Reset\n" +
-                "• <b>Probe Optics:</b> <b>T</b> (Toggle Convex/Linear) | <b>+/-</b> (Depth) | <b>[ / ]</b> (Sector FOV)\n" +
+                "• <b>Pipeline & Optics:</b> <b>M</b> (GPU/CPU/Diff) | <b>V</b> (Debug View) | <b>T</b> (Probe Type) | <b>+/-</b> (Depth) | <b>[ / ]</b> (FOV)\n" +
                 "• <b>3D Viewport Camera:</b> <b>Right-Click Drag</b> (Orbit), <b>Middle-Click Drag</b> (Pan), <b>Scroll</b> (Zoom)";
 
             GameObject guideObj = CreateText("ControlsGuide", guideBox.transform, controlsString, 13, FontStyle.Normal, TextAnchor.MiddleLeft, defaultFont);

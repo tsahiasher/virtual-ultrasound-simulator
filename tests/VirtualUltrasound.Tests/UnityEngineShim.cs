@@ -3,6 +3,18 @@ using System;
 
 namespace UnityEngine
 {
+    [AttributeUsage(AttributeTargets.Field)]
+    public class TooltipAttribute : Attribute
+    {
+        public TooltipAttribute(string tooltip) { }
+    }
+
+    [AttributeUsage(AttributeTargets.Field)]
+    public class RangeAttribute : Attribute
+    {
+        public RangeAttribute(float min, float max) { }
+    }
+
     public struct Vector2
     {
         public float x;
@@ -115,6 +127,90 @@ namespace UnityEngine
         }
     }
 
+    public struct Vector3Int
+    {
+        public int x;
+        public int y;
+        public int z;
+
+        public Vector3Int(int x, int y, int z) { this.x = x; this.y = y; this.z = z; }
+    }
+
+    public struct Color
+    {
+        public float r;
+        public float g;
+        public float b;
+        public float a;
+
+        public Color(float r, float g, float b, float a = 1.0f)
+        {
+            this.r = r; this.g = g; this.b = b; this.a = a;
+        }
+
+        public static Color black => new Color(0f, 0f, 0f, 1f);
+        public static Color white => new Color(1f, 1f, 1f, 1f);
+    }
+
+    public struct Matrix4x4
+    {
+        public float m00, m01, m02, m03;
+        public float m10, m11, m12, m13;
+        public float m20, m21, m22, m23;
+        public float m30, m31, m32, m33;
+
+        public static Matrix4x4 identity => new Matrix4x4
+        {
+            m00 = 1, m11 = 1, m22 = 1, m33 = 1
+        };
+
+        public static Matrix4x4 Rotate(Quaternion q)
+        {
+            float num = q.x * 2f;
+            float num2 = q.y * 2f;
+            float num3 = q.z * 2f;
+            float num4 = q.x * num;
+            float num5 = q.y * num2;
+            float num6 = q.z * num3;
+            float num7 = q.x * num2;
+            float num8 = q.x * num3;
+            float num9 = q.y * num3;
+            float num10 = q.w * num;
+            float num11 = q.w * num2;
+            float num12 = q.w * num3;
+
+            Matrix4x4 result = identity;
+            result.m00 = 1f - (num5 + num6);
+            result.m01 = num7 - num12;
+            result.m02 = num8 + num11;
+            result.m10 = num7 + num12;
+            result.m11 = 1f - (num4 + num6);
+            result.m12 = num9 - num10;
+            result.m20 = num8 - num11;
+            result.m21 = num9 + num10;
+            result.m22 = 1f - (num4 + num5);
+            return result;
+        }
+
+        public Vector3 MultiplyPoint3x4(Vector3 point)
+        {
+            return new Vector3(
+                m00 * point.x + m01 * point.y + m02 * point.z + m03,
+                m10 * point.x + m11 * point.y + m12 * point.z + m13,
+                m20 * point.x + m21 * point.y + m22 * point.z + m23
+            );
+        }
+
+        public Vector3 MultiplyVector(Vector3 vector)
+        {
+            return new Vector3(
+                m00 * vector.x + m01 * vector.y + m02 * vector.z,
+                m10 * vector.x + m11 * vector.y + m12 * vector.z,
+                m20 * vector.x + m21 * vector.y + m22 * vector.z
+            );
+        }
+    }
+
     public static class Mathf
     {
         public const float Deg2Rad = MathF.PI / 180f;
@@ -135,6 +231,10 @@ namespace UnityEngine
         public static float Sin(float f) => MathF.Sin(f);
         public static float Cos(float f) => MathF.Cos(f);
         public static float Lerp(float a, float b, float t) => a + (b - a) * Math.Clamp(t, 0f, 1f);
+        public static int CeilToInt(float f) => (int)MathF.Ceiling(f);
+        public static int FloorToInt(float f) => (int)MathF.Floor(f);
+        public static float Exp(float f) => MathF.Exp(f);
+        public static float Log(float f) => MathF.Log(f);
     }
 }
 #endif

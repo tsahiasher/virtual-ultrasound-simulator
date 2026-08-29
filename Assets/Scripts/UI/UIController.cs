@@ -1,5 +1,6 @@
 using UnityEngine;
 using UnityEngine.UI;
+using VirtualUltrasound.Core;
 using VirtualUltrasound.Probe;
 using VirtualUltrasound.Rendering;
 using VirtualUltrasound.Volume;
@@ -7,7 +8,7 @@ using VirtualUltrasound.Volume;
 namespace VirtualUltrasound.UI
 {
     /// <summary>
-    /// Manages the heads-up display, telemetry data, debug toggles, and view presets.
+    /// Manages the heads-up display, telemetry data, mode toggles, and view presets.
     /// </summary>
     public class UIController : MonoBehaviour
     {
@@ -60,6 +61,24 @@ namespace VirtualUltrasound.UI
                 FindReferences();
             }
 
+            // Keyboard shortcut for cycling render modes (GPU -> CPU Reference -> Difference)
+            if (Input.GetKeyDown(KeyCode.M))
+            {
+                if (sliceRenderer != null)
+                {
+                    sliceRenderer.ToggleRenderMode();
+                }
+            }
+
+            // Keyboard shortcut for cycling appearance debug views (Final -> Raw -> Boundary -> Speckle)
+            if (Input.GetKeyDown(KeyCode.V))
+            {
+                if (sliceRenderer != null)
+                {
+                    sliceRenderer.CycleDebugView();
+                }
+            }
+
             UpdateFPS();
             UpdateTelemetry();
         }
@@ -80,7 +99,24 @@ namespace VirtualUltrasound.UI
 
             if (performanceText != null && sliceRenderer != null && probeGeometry != null)
             {
-                performanceText.text = $"FPS: {currentFps:F0} | Acq: {probeGeometry.ScanLines}x{probeGeometry.SamplesPerScanLine} | Disp: {sliceRenderer.SliceWidth}x{sliceRenderer.SliceHeight} | {sliceRenderer.LastRenderTimeMs:F1}ms";
+                string modeStr = sliceRenderer.RenderMode switch
+                {
+                    UltrasoundRenderMode.GPU => "<color=#4ade80>[GPU]</color>",
+                    UltrasoundRenderMode.CPUReference => "<color=#60a5fa>[CPU Ref]</color>",
+                    UltrasoundRenderMode.Difference => "<color=#f87171>[Diff]</color>",
+                    _ => "[GPU]"
+                };
+
+                string viewStr = sliceRenderer.AppearanceSettings.DebugView switch
+                {
+                    AppearanceDebugView.FinalUltrasound => "B-Mode",
+                    AppearanceDebugView.RawAnatomical => "Raw",
+                    AppearanceDebugView.BoundaryResponse => "Boundary",
+                    AppearanceDebugView.SpeckleScattering => "Speckle",
+                    _ => "B-Mode"
+                };
+
+                performanceText.text = $"FPS: {currentFps:F0} | {modeStr} ({viewStr}) | {sliceRenderer.LastRenderTimeMs:F1}ms (Acq: {sliceRenderer.LastAcquisitionTimeMs:F1}ms, Scan: {sliceRenderer.LastScanConvertTimeMs:F1}ms)";
             }
         }
 
@@ -97,10 +133,23 @@ namespace VirtualUltrasound.UI
 
                 int totalSamples = probeGeometry.ScanLines * probeGeometry.SamplesPerScanLine;
 
+                string modeLabel = sliceRenderer.RenderMode switch
+                {
+                    UltrasoundRenderMode.GPU => "<b>Mode:</b> <color=#4ade80>GPU Hardware Accelerated</color>",
+                    UltrasoundRenderMode.CPUReference => "<b>Mode:</b> <color=#60a5fa>CPU Reference</color>",
+                    UltrasoundRenderMode.Difference => $"<b>Mode:</b> <color=#f87171>Difference Analysis</color> (Max Diff: {sliceRenderer.MaxDifference:P1}, Mean: {sliceRenderer.MeanDifference:P2})",
+                    _ => "Mode: GPU"
+                };
+
+                var app = sliceRenderer.AppearanceSettings;
+                string appDetails = app.Enabled
+                    ? $"<b>Appearance:</b> <color=#f59e0b>{app.DebugView}</color> | Gain {app.Gain:F1}x | Atten {app.DepthAttenuation:F1}m⁻¹ | Speckle {app.SpeckleStrength:P0}"
+                    : "<b>Appearance:</b> <color=#94a3b8>Disabled (Raw Grayscale)</color>";
+
                 telemetryText.text =
-                    $"<b>Probe Pose:</b>\n" +
-                    $"Pos: ({pos.x:F1}, {pos.y:F1}, {pos.z:F1}) mm\n" +
-                    $"Rot: P={rot.x:F0}° Y={rot.y:F0}° R={rot.z:F0}°\n" +
+                    $"{modeLabel}\n" +
+                    $"{appDetails}\n" +
+                    $"<b>Probe Pose:</b> ({pos.x:F1}, {pos.y:F1}, {pos.z:F1}) mm | Rot: P={rot.x:F0}° Y={rot.y:F0}° R={rot.z:F0}°\n" +
                     $"{geomDetails}\n" +
                     $"<b>Acquisition:</b> {probeGeometry.ScanLines} lines × {probeGeometry.SamplesPerScanLine} samples = <b>{totalSamples:N0} 3D samples</b>\n" +
                     $"<b>Display:</b> {sliceRenderer.SliceWidth}×{sliceRenderer.SliceHeight} ({sliceRenderer.ScanConversionFilter})";

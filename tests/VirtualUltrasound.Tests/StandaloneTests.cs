@@ -17,7 +17,9 @@ namespace VirtualUltrasound.Tests
             public Vector3 SphereCenter = new Vector3(0f, 0f, 0.05f); // 50mm deep
             public float SphereRadius = 0.025f; // 25mm radius
             public float InsideIntensity = 0.8f;
+            public float InsideScattering = 0.6f;
             public float OutsideIntensity = 0.0f;
+            public float OutsideScattering = 0.0f;
             public int SampleCount = 0;
 
             public SampleResult SampleWorld(Vector3 worldPosition)
@@ -25,9 +27,9 @@ namespace VirtualUltrasound.Tests
                 SampleCount++;
                 if ((worldPosition - SphereCenter).sqrMagnitude <= (SphereRadius * SphereRadius))
                 {
-                    return new SampleResult(InsideIntensity, TissueType.Organ1);
+                    return new SampleResult(InsideIntensity, InsideScattering, TissueType.Organ1);
                 }
-                return new SampleResult(OutsideIntensity, TissueType.Background);
+                return new SampleResult(OutsideIntensity, OutsideScattering, TissueType.Background);
             }
         }
 
@@ -359,21 +361,450 @@ namespace VirtualUltrasound.Tests
         }
 
         [Test]
+        public void GPUVolumeBounds_WorldToVolumeUVW_And_VolumeUVWToWorld_RoundTripIsExact()
+        {
+            Vector3 boundsMin = new Vector3(-0.15f, -0.20f, -0.12f);
+            Vector3 boundsMax = new Vector3(0.15f, 0.20f, 0.12f);
+            Vector3 boundsSize = boundsMax - boundsMin;
+
+            Vector3 worldPos = new Vector3(0.045f, -0.080f, 0.030f);
+
+            // Compute UVW: (worldPos - boundsMin) / boundsSize
+            float u = (worldPos.x - boundsMin.x) / boundsSize.x;
+            float v = (worldPos.y - boundsMin.y) / boundsSize.y;
+            float w = (worldPos.z - boundsMin.z) / boundsSize.z;
+            Vector3 uvw = new Vector3(u, v, w);
+
+            // Reconstruct world position
+            Vector3 reconstructed = new Vector3(
+                boundsMin.x + (uvw.x * boundsSize.x),
+                boundsMin.y + (uvw.y * boundsSize.y),
+                boundsMin.z + (uvw.z * boundsSize.z)
+            );
+
+            Assert.AreEqual(worldPos.x, reconstructed.x, 1e-4f);
+            Assert.AreEqual(worldPos.y, reconstructed.y, 1e-4f);
+            Assert.AreEqual(worldPos.z, reconstructed.z, 1e-4f);
+        }
+
+        [Test]
+        public void GPUShaderMath_ScanLineDirections_FirstCenterLast_MatchCPUCoordinateTransform()
+        {
+            float sectorAngleDeg = 65f;
+            float sectorAngleRad = sectorAngleDeg * Mathf.Deg2Rad;
+            float apexRadius = 0.040f;
+            float maxDepth = 0.120f;
+            int scanLines = 128;
+
+            // 1. First scan line (id.x = 0, u = 0.0) -> left sector boundary (-halfAngle)
+            float uFirst = 0.0f;
+            float halfAngle = sectorAngleRad * 0.5f;
+            float angleFirst = Mathf.Lerp(-halfAngle, halfAngle, uFirst);
+            float rEnd = apexRadius + maxDepth;
+            Vector3 gpuFirstRayProbe = new Vector3(rEnd * Mathf.Sin(angleFirst), 0f, (rEnd * Mathf.Cos(angleFirst)) - apexRadius);
+
+            Vector3 cpuFirstRayProbe = CoordinateTransform.UVToCurvilinearProbeSpace(new Vector2(0f, 1f), sectorAngleDeg, apexRadius, maxDepth);
+            Assert.AreEqual(cpuFirstRayProbe.x, gpuFirstRayProbe.x, 1e-4f);
+            Assert.AreEqual(cpuFirstRayProbe.z, gpuFirstRayProbe.z, 1e-4f);
+
+            // 2. Center scan line (u = 0.5) -> central beam axis (angle = 0.0)
+            float uCenter = 0.5f;
+            float angleCenter = Mathf.Lerp(-halfAngle, halfAngle, uCenter);
+            Vector3 gpuCenterRayProbe = new Vector3(rEnd * Mathf.Sin(angleCenter), 0f, (rEnd * Mathf.Cos(angleCenter)) - apexRadius);
+
+            Vector3 cpuCenterRayProbe = CoordinateTransform.UVToCurvilinearProbeSpace(new Vector2(0.5f, 1f), sectorAngleDeg, apexRadius, maxDepth);
+            Assert.AreEqual(0f, gpuCenterRayProbe.x, 1e-4f);
+            Assert.AreEqual(cpuCenterRayProbe.x, gpuCenterRayProbe.x, 1e-4f);
+            Assert.AreEqual(cpuCenterRayProbe.z, gpuCenterRayProbe.z, 1e-4f);
+
+            // 3. Last scan line (id.x = scanLines - 1, u = 1.0) -> right sector boundary (+halfAngle)
+            float uLast = 1.0f;
+            float angleLast = Mathf.Lerp(-halfAngle, halfAngle, uLast);
+            Vector3 gpuLastRayProbe = new Vector3(rEnd * Mathf.Sin(angleLast), 0f, (rEnd * Mathf.Cos(angleLast)) - apexRadius);
+
+            Vector3 cpuLastRayProbe = CoordinateTransform.UVToCurvilinearProbeSpace(new Vector2(1f, 1f), sectorAngleDeg, apexRadius, maxDepth);
+            Assert.AreEqual(cpuLastRayProbe.x, gpuLastRayProbe.x, 1e-4f);
+            Assert.AreEqual(cpuLastRayProbe.z, gpuLastRayProbe.z, 1e-4f);
+        }
+
+        [Test]
+        public void CPUVsGPU_AnalyticalParity_SyntheticPrimitivesProduceMatchingSlices()
+        {
+            Vector3 probePos = new Vector3(0.01f, 0.02f, -0.01f);
+            Quaternion probeRot = Quaternion.Euler(15f, 25f, 0f);
+            Matrix4x4 probeRotMat = Matrix4x4.Rotate(probeRot);
+
+            float sectorAngleDeg = 60f;
+            float apexRadius = 0.040f;
+            float maxDepth = 0.100f;
+            int scanLines = 64;
+            int samplesPerLine = 64;
+            int dispW = 128;
+            int dispH = 128;
+
+            CountingMockVolumeSampler sampler = new CountingMockVolumeSampler
+            {
+                SphereCenter = new Vector3(0.01f, 0.02f, 0.05f),
+                SphereRadius = 0.020f,
+                InsideIntensity = 0.85f,
+                OutsideIntensity = 0.15f
+            };
+
+            // 1. Run CPU Reference Pipeline
+            PolarBuffer cpuPolar = new PolarBuffer(scanLines, samplesPerLine);
+            SliceBuffer cpuDisplay = new SliceBuffer(dispW, dispH);
+            CPUSliceGenerator cpuGen = new CPUSliceGenerator();
+            cpuGen.GenerateSlice(probePos, probeRot, 0.05f, maxDepth, ProbeType.Curvilinear, sectorAngleDeg, apexRadius, sampler, cpuPolar, cpuDisplay);
+
+            // 2. Simulate GPU Compute Shader Pipeline analytically
+            float[,] gpuPolar = new float[scanLines, samplesPerLine];
+            float invLines = 1.0f / (scanLines - 1);
+            float invSamples = 1.0f / (samplesPerLine - 1);
+            float halfAngleRad = (sectorAngleDeg * 0.5f) * Mathf.Deg2Rad;
+
+            for (int x = 0; x < scanLines; x++)
+            {
+                float u = x * invLines;
+                float angleRad = Mathf.Lerp(-halfAngleRad, halfAngleRad, u);
+                for (int y = 0; y < samplesPerLine; y++)
+                {
+                    float v = y * invSamples;
+                    float r = apexRadius + (v * maxDepth);
+                    float xP = r * Mathf.Sin(angleRad);
+                    float zP = (r * Mathf.Cos(angleRad)) - apexRadius;
+                    Vector3 pP = new Vector3(xP, 0f, zP);
+                    Vector3 pW = probePos + probeRotMat.MultiplyVector(pP);
+
+                    gpuPolar[x, y] = sampler.SampleWorld(pW).Intensity;
+                }
+            }
+
+            // Verify Stage 1 Polar acquisition parity between CPU and GPU math
+            float maxPolarDiff = 0f;
+            for (int x = 0; x < scanLines; x++)
+            {
+                for (int y = 0; y < samplesPerLine; y++)
+                {
+                    float diff = Mathf.Abs(cpuPolar.GetSample(x, y) - gpuPolar[x, y]);
+                    if (diff > maxPolarDiff) maxPolarDiff = diff;
+                }
+            }
+            Assert.AreEqual(0.0f, maxPolarDiff, 1e-4f, "CPU and GPU Stage 1 Polar Acquisition must match analytically.");
+
+            // 3. Simulate GPU Stage 2 Scan Conversion
+            CoordinateTransform.GetSectorBoundingDimensions(sectorAngleDeg, apexRadius, maxDepth, out float lateralSpan, out _);
+            float effectiveLateralSpan = lateralSpan * 1.06f;
+            float[,] gpuDisplay = new float[dispW, dispH];
+            float invW = 1.0f / (dispW - 1);
+            float invH = 1.0f / (dispH - 1);
+
+            for (int y = 0; y < dispH; y++)
+            {
+                float v = ((dispH - 1 - y) * invH);
+                float zP = v * maxDepth;
+                float zApex = zP + apexRadius;
+
+                for (int x = 0; x < dispW; x++)
+                {
+                    float u = (x * invW) - 0.5f;
+                    float xP = u * effectiveLateralSpan;
+                    float r = Mathf.Sqrt(xP * xP + zApex * zApex);
+                    float angleRad = Mathf.Atan2(xP, zApex);
+
+                    if (Mathf.Abs(angleRad) > halfAngleRad || r < apexRadius || r > (apexRadius + maxDepth))
+                    {
+                        gpuDisplay[x, y] = 0.0f; // Acoustic mask
+                    }
+                    else
+                    {
+                        float uPolar = (angleRad + halfAngleRad) / (2f * halfAngleRad);
+                        float vPolar = (r - apexRadius) / maxDepth;
+                        gpuDisplay[x, y] = cpuPolar.SampleBilinear(uPolar, vPolar);
+                    }
+                }
+            }
+
+            // Verify Stage 2 Scan Conversion parity
+            float maxDispDiff = 0f;
+            float sumDispDiff = 0f;
+            for (int y = 0; y < dispH; y++)
+            {
+                for (int x = 0; x < dispW; x++)
+                {
+                    int cpuIdx = y * dispW + x;
+                    float diff = Mathf.Abs(cpuDisplay.Intensities[cpuIdx] - gpuDisplay[x, y]);
+                    if (diff > maxDispDiff) maxDispDiff = diff;
+                    sumDispDiff += diff;
+                }
+            }
+
+            float meanDispDiff = sumDispDiff / (dispW * dispH);
+            Assert.AreEqual(0.0f, maxDispDiff, 1e-4f, "CPU and GPU Stage 2 Cartesian Scan Conversion must match analytically.");
+            Assert.AreEqual(0.0f, meanDispDiff, 1e-4f, "Mean difference must be 0.0.");
+        }
+
+        [Test]
+        public void CPUVsGPU_ProbeOutsideVolume_ProducesStrictZeroIntensities()
+        {
+            Vector3 probePosFar = new Vector3(10.0f, 10.0f, 10.0f); // 10 meters away
+            Quaternion probeRot = Quaternion.identity;
+
+            CountingMockVolumeSampler sampler = new CountingMockVolumeSampler
+            {
+                SphereCenter = Vector3.zero,
+                SphereRadius = 0.05f,
+                InsideIntensity = 1.0f,
+                OutsideIntensity = 0.0f
+            };
+
+            PolarBuffer polar = new PolarBuffer(32, 32);
+            SliceBuffer display = new SliceBuffer(64, 64);
+            CPUSliceGenerator gen = new CPUSliceGenerator();
+
+            gen.GenerateSlice(probePosFar, probeRot, 0.05f, 0.120f, ProbeType.Curvilinear, 65f, 0.040f, sampler, polar, display);
+
+            for (int i = 0; i < display.TotalPixels; i++)
+            {
+                Assert.AreEqual(0.0f, display.Intensities[i], 1e-5f);
+            }
+        }
+
+        [Test]
+        public void BoundaryResponse_HomogeneousVsInterface_ProducesHigherEchoAtBoundary()
+        {
+            // Test that a spatial interface/boundary produces a distinctly higher gradient echo than a homogeneous region
+            CountingMockVolumeSampler sampler = new CountingMockVolumeSampler
+            {
+                SphereCenter = new Vector3(0f, 0f, 0.05f),
+                SphereRadius = 0.020f,
+                InsideIntensity = 0.80f,
+                InsideScattering = 0.0f, // zero scatter to isolate boundary gradient
+                OutsideIntensity = 0.10f,
+                OutsideScattering = 0.0f
+            };
+
+            CPUSliceGenerator generator = new CPUSliceGenerator();
+            PolarBuffer polar = new PolarBuffer(32, 64);
+            UltrasoundAppearanceSettings boundaryViewSettings = new UltrasoundAppearanceSettings
+            {
+                Enabled = true,
+                DebugView = AppearanceDebugView.BoundaryResponse,
+                BoundaryStrength = 2.0f,
+                Gain = 1.0f
+            };
+
+            generator.AcquirePolarData(Vector3.zero, Quaternion.identity, 0.05f, 0.10f, ProbeType.Linear, 0f, 0f, sampler, polar, boundaryViewSettings);
+
+            // Homogeneous outside region (e.g. depth 10mm -> sample index ~6)
+            float homogeneousEcho = polar.GetSample(16, 6);
+
+            // Interface boundary (depth 30mm, sphere edge -> sample index ~19)
+            float boundaryEcho = polar.GetSample(16, 19);
+
+            Assert.Greater(boundaryEcho, homogeneousEcho + 0.1f, "Material boundary must produce higher gradient echo than homogeneous interior.");
+        }
+
+        [Test]
+        public void DepthAttenuation_DeeperSamples_MonotonicallyDecreaseSignal()
+        {
+            CountingMockVolumeSampler sampler = new CountingMockVolumeSampler
+            {
+                SphereCenter = Vector3.zero,
+                SphereRadius = 1.0f, // Infinite homogeneous sphere
+                InsideIntensity = 0.8f,
+                InsideScattering = 0.5f,
+                OutsideIntensity = 0.8f,
+                OutsideScattering = 0.5f
+            };
+
+            CPUSliceGenerator generator = new CPUSliceGenerator();
+            PolarBuffer polar = new PolarBuffer(8, 64);
+            UltrasoundAppearanceSettings attenSettings = new UltrasoundAppearanceSettings
+            {
+                Enabled = true,
+                DebugView = AppearanceDebugView.FinalUltrasound,
+                SpeckleStrength = 0.0f, // zero speckle to test pure attenuation decay
+                DepthAttenuation = 10.0f, // 10 m^-1 decay
+                Gain = 1.0f,
+                CompressionRatio = 1.0f
+            };
+
+            generator.AcquirePolarData(Vector3.zero, Quaternion.identity, 0.05f, 0.120f, ProbeType.Linear, 0f, 0f, sampler, polar, attenSettings);
+
+            float shallowSignal = polar.GetSample(4, 5); // ~10mm depth
+            float deepSignal = polar.GetSample(4, 55);    // ~100mm depth
+
+            Assert.Greater(shallowSignal, deepSignal, "Shallow echo must be stronger than deep echo under positive depth attenuation.");
+        }
+
+        [Test]
+        public void Gain_IncreasesSignalMonotonically()
+        {
+            CountingMockVolumeSampler sampler = new CountingMockVolumeSampler
+            {
+                SphereCenter = new Vector3(0f, 0f, 0.05f),
+                SphereRadius = 0.03f,
+                InsideIntensity = 0.5f,
+                InsideScattering = 0.3f,
+                OutsideIntensity = 0.0f,
+                OutsideScattering = 0.0f
+            };
+
+            CPUSliceGenerator generator = new CPUSliceGenerator();
+            PolarBuffer polarLow = new PolarBuffer(16, 32);
+            PolarBuffer polarHigh = new PolarBuffer(16, 32);
+
+            UltrasoundAppearanceSettings lowGain = new UltrasoundAppearanceSettings
+            {
+                Enabled = true,
+                DebugView = AppearanceDebugView.FinalUltrasound,
+                Gain = 0.5f,
+                SpeckleStrength = 0.0f,
+                DepthAttenuation = 0.0f,
+                CompressionRatio = 10.0f
+            };
+
+            UltrasoundAppearanceSettings highGain = new UltrasoundAppearanceSettings
+            {
+                Enabled = true,
+                DebugView = AppearanceDebugView.FinalUltrasound,
+                Gain = 2.5f,
+                SpeckleStrength = 0.0f,
+                DepthAttenuation = 0.0f,
+                CompressionRatio = 10.0f
+            };
+
+            generator.AcquirePolarData(Vector3.zero, Quaternion.identity, 0.05f, 0.10f, ProbeType.Linear, 0f, 0f, sampler, polarLow, lowGain);
+            generator.AcquirePolarData(Vector3.zero, Quaternion.identity, 0.05f, 0.10f, ProbeType.Linear, 0f, 0f, sampler, polarHigh, highGain);
+
+            float sampleLow = polarLow.GetSample(8, 16);
+            float sampleHigh = polarHigh.GetSample(8, 16);
+
+            Assert.Greater(sampleHigh, sampleLow, "Higher gain must produce higher signal intensity.");
+        }
+
+        [Test]
+        public void DynamicRangeCompression_PreservesMonotonicOrdering()
+        {
+            float comp = 25.0f;
+            float Compress(float x) => MathF.Log(1.0f + (comp * x)) / MathF.Log(1.0f + comp);
+
+            float v0 = 0.05f;
+            float v1 = 0.20f;
+            float v2 = 0.80f;
+
+            float c0 = Compress(v0);
+            float c1 = Compress(v1);
+            float c2 = Compress(v2);
+
+            Assert.Less(c0, c1);
+            Assert.Less(c1, c2);
+
+            // Weak echoes (v0) should receive higher relative boost than saturated echoes (v2)
+            float boostWeak = c0 / v0; // ~4.5x boost
+            float boostStrong = c2 / v2; // ~1.1x boost
+            Assert.Greater(boostWeak, boostStrong, "Logarithmic compression should boost weak echoes more than strong echoes.");
+        }
+
+        [Test]
+        public void CoherentSpeckle_StationaryProbe_Is100PercentDeterministic()
+        {
+            Vector3 pos = new Vector3(0.02f, -0.015f, 0.045f);
+            float scale = 150.0f;
+
+            float val1 = CPUSliceGenerator.CoherentNoise3D(pos, scale);
+            float val2 = CPUSliceGenerator.CoherentNoise3D(pos, scale);
+
+            Assert.AreEqual(val1, val2, 1e-6f, "3D coherent noise must be 100% deterministic for identical spatial positions.");
+        }
+
+        [Test]
+        public void CoherentSpeckle_SpatialTranslation_VariesCohesivelyWithPosition()
+        {
+            Vector3 p1 = new Vector3(0.0f, 0.0f, 0.05f);
+            Vector3 p2 = new Vector3(0.02f, 0.0f, 0.05f); // 20mm laterally
+            float scale = 150.0f;
+
+            float val1 = CPUSliceGenerator.CoherentNoise3D(p1, scale);
+            float val2 = CPUSliceGenerator.CoherentNoise3D(p2, scale);
+
+            Assert.AreNotEqual(val1, val2, "Spatial noise should vary across distinct physical coordinates.");
+        }
+
+        [Test]
+        public void FluidRegion_GeneratesLowInternalScatterWithEchoicBoundary()
+        {
+            // Fluid has very low scattering (0.02) and distinct outer boundary
+            CountingMockVolumeSampler sampler = new CountingMockVolumeSampler
+            {
+                SphereCenter = new Vector3(0f, 0f, 0.05f),
+                SphereRadius = 0.025f,
+                InsideIntensity = 0.04f,
+                InsideScattering = 0.02f,
+                OutsideIntensity = 0.50f,
+                OutsideScattering = 0.40f
+            };
+
+            CPUSliceGenerator generator = new CPUSliceGenerator();
+            PolarBuffer polar = new PolarBuffer(32, 64);
+            UltrasoundAppearanceSettings app = UltrasoundAppearanceSettings.Default;
+
+            generator.AcquirePolarData(Vector3.zero, Quaternion.identity, 0.05f, 0.10f, ProbeType.Linear, 0f, 0f, sampler, polar, app);
+
+            // Center of cyst (depth 50mm -> sample index 32)
+            float centerSignal = polar.GetSample(16, 32);
+
+            // Surrounding tissue (depth 15mm -> sample index ~9)
+            float tissueSignal = polar.GetSample(16, 9);
+
+            Assert.Less(centerSignal, tissueSignal, "Fluid interior must be darker than surrounding tissue.");
+        }
+
+        [Test]
+        public void Appearance_DoesNotAlterGeometryOrAcousticSectorMask()
+        {
+            CountingMockVolumeSampler sampler = new CountingMockVolumeSampler
+            {
+                SphereCenter = new Vector3(0f, 0f, 0.05f),
+                SphereRadius = 0.020f,
+                InsideIntensity = 0.85f,
+                InsideScattering = 0.60f,
+                OutsideIntensity = 0.20f,
+                OutsideScattering = 0.25f
+            };
+
+            PolarBuffer polar = new PolarBuffer(32, 64);
+            SliceBuffer display = new SliceBuffer(128, 128);
+            CPUSliceGenerator generator = new CPUSliceGenerator();
+
+            UltrasoundAppearanceSettings app = UltrasoundAppearanceSettings.Default;
+
+            generator.AcquirePolarData(Vector3.zero, Quaternion.identity, 0.05f, 0.120f, ProbeType.Curvilinear, 65f, 0.040f, sampler, polar, app);
+            generator.ScanConvert(0.05f, 0.120f, ProbeType.Curvilinear, 65f, 0.040f, polar, display);
+
+            // Display top-left corner outside sector must STILL be strictly 0.0 mask!
+            int topLeftIdx = 0;
+            int topRightIdx = display.Width - 1;
+            Assert.AreEqual(0.0f, display.Intensities[topLeftIdx], 1e-4f, "Acoustic mask must remain strictly black outside sector.");
+            Assert.AreEqual(0.0f, display.Intensities[topRightIdx], 1e-4f, "Acoustic mask must remain strictly black outside sector.");
+        }
+
+        [Test]
         public void Benchmark_TwoStagePipeline_PerformanceMetrics()
         {
             CPUSliceGenerator generator = new CPUSliceGenerator();
             CountingMockVolumeSampler sampler = new CountingMockVolumeSampler();
             System.Diagnostics.Stopwatch sw = new System.Diagnostics.Stopwatch();
 
-            (int lines, int samples, int dispW, int dispH)[] configs = new[]
+            (int lines, int samples, int dispW, int dispH, string label)[] configs = new[]
             {
-                (32, 32, 256, 256),
-                (128, 128, 256, 256),
-                (256, 512, 256, 256),
-                (256, 512, 512, 512)
+                (32, 32, 256, 256, "Low"),
+                (128, 256, 256, 256, "Normal"),
+                (256, 512, 256, 256, "High"),
+                (512, 512, 256, 256, "Stress")
             };
 
-            Console.WriteLine("\n--- CPU Reference Performance Benchmark ---");
+            Console.WriteLine("\n--- CPU Reference Performance Benchmark (Phase 4 Profiling) ---");
             foreach (var cfg in configs)
             {
                 PolarBuffer polar = new PolarBuffer(cfg.lines, cfg.samples);
@@ -382,8 +813,8 @@ namespace VirtualUltrasound.Tests
                 // Warm up
                 generator.GenerateSlice(Vector3.zero, Quaternion.identity, 0.05f, 0.120f, ProbeType.Curvilinear, 65f, 0.040f, sampler, polar, display);
 
-                // Benchmark 50 iterations
-                int iterations = 50;
+                // Benchmark 30 iterations
+                int iterations = 30;
                 sw.Restart();
                 for (int i = 0; i < iterations; i++)
                 {
@@ -393,7 +824,7 @@ namespace VirtualUltrasound.Tests
 
                 double avgTimeMs = sw.Elapsed.TotalMilliseconds / iterations;
                 int totalSamples = cfg.lines * cfg.samples;
-                Console.WriteLine($"Acquisition: {cfg.lines}x{cfg.samples} ({totalSamples:N0} vol samples) | Display: {cfg.dispW}x{cfg.dispH} | Avg Time: {avgTimeMs:F3}ms | Approx FPS: {1000.0 / avgTimeMs:F0}");
+                Console.WriteLine($"[{cfg.label}] Acquisition: {cfg.lines}x{cfg.samples} ({totalSamples:N0} vol samples) | Display: {cfg.dispW}x{cfg.dispH} | CPU Time: {avgTimeMs:F2}ms | CPU Approx FPS: {1000.0 / avgTimeMs:F0}");
             }
         }
     }

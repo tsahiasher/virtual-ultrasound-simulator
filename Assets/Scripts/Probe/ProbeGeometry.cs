@@ -29,8 +29,8 @@ namespace VirtualUltrasound.Probe
         [Range(8, 1024)]
         [SerializeField] private int scanLines = 128;
         [Tooltip("Number of axial depth samples per scan line (controls volume samples per ray).")]
-        [Range(8, 1024)]
-        [SerializeField] private int samplesPerScanLine = 128;
+        [Range(8, 2048)]
+        [SerializeField] private int samplesPerScanLine = 1024;
 
         public event Action OnGeometryChanged;
 

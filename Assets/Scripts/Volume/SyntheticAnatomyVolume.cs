@@ -18,18 +18,26 @@ namespace VirtualUltrasound.Volume
         [Tooltip("Acoustic intensity of surrounding parenchymal body tissue.")]
         [Range(0f, 1f)]
         [SerializeField] private float bodyIntensity = 0.25f;
+        [Tooltip("Diffuse backscatter coefficient of surrounding parenchymal body tissue.")]
+        [Range(0f, 1f)]
+        [SerializeField] private float bodyScattering = 0.25f;
 
         [Header("Organ 1 - Hyperechoic Structure (Sphere)")]
         [SerializeField] private Vector3 organ1Center = new Vector3(0.035f, 0.02f, 0.015f);
         [SerializeField] private float organ1Radius = 0.035f;
         [Range(0f, 1f)]
         [SerializeField] private float organ1Intensity = 0.65f;
+        [Range(0f, 1f)]
+        [SerializeField] private float organ1Scattering = 0.60f;
 
         [Header("Organ 2 - Anechoic Cyst / Fluid Cavity (Sphere)")]
         [SerializeField] private Vector3 organ2Center = new Vector3(-0.04f, -0.015f, -0.01f);
         [SerializeField] private float organ2Radius = 0.025f;
         [Range(0f, 1f)]
         [SerializeField] private float organ2Intensity = 0.04f;
+        [Tooltip("Fluid has virtually zero internal backscattering.")]
+        [Range(0f, 1f)]
+        [SerializeField] private float organ2Scattering = 0.02f;
 
         [Header("Vessel / Tubular Structure (Cylinder)")]
         [SerializeField] private Vector3 vesselStart = new Vector3(-0.08f, -0.06f, 0.03f);
@@ -39,7 +47,11 @@ namespace VirtualUltrasound.Volume
         [Range(0f, 1f)]
         [SerializeField] private float vesselWallIntensity = 0.88f;
         [Range(0f, 1f)]
+        [SerializeField] private float vesselWallScattering = 0.85f;
+        [Range(0f, 1f)]
         [SerializeField] private float vesselLumenIntensity = 0.05f;
+        [Range(0f, 1f)]
+        [SerializeField] private float vesselLumenScattering = 0.02f;
 
         public string VolumeName => "Procedural Synthetic Anatomy Volume";
 
@@ -56,19 +68,26 @@ namespace VirtualUltrasound.Volume
         public Vector3 BodyCenter => transform.TransformPoint(bodyCenter);
         public Vector3 BodyRadii => Vector3.Scale(bodyRadii, transform.lossyScale);
         public float BodyIntensity => bodyIntensity;
+        public float BodyScattering => bodyScattering;
 
         public Vector3 Organ1Center => transform.TransformPoint(organ1Center);
         public float Organ1Radius => organ1Radius * transform.lossyScale.x;
         public float Organ1Intensity => organ1Intensity;
+        public float Organ1Scattering => organ1Scattering;
 
         public Vector3 Organ2Center => transform.TransformPoint(organ2Center);
         public float Organ2Radius => organ2Radius * transform.lossyScale.x;
         public float Organ2Intensity => organ2Intensity;
+        public float Organ2Scattering => organ2Scattering;
 
         public Vector3 VesselStart => transform.TransformPoint(vesselStart);
         public Vector3 VesselEnd => transform.TransformPoint(vesselEnd);
         public float VesselOuterRadius => vesselOuterRadius * transform.lossyScale.x;
         public float VesselWallThickness => vesselWallThickness * transform.lossyScale.x;
+        public float VesselWallIntensity => vesselWallIntensity;
+        public float VesselWallScattering => vesselWallScattering;
+        public float VesselLumenIntensity => vesselLumenIntensity;
+        public float VesselLumenScattering => vesselLumenScattering;
 
         public bool IsInBounds(Vector3 worldPos)
         {
@@ -77,6 +96,7 @@ namespace VirtualUltrasound.Volume
 
         /// <summary>
         /// Evaluates sample result at continuous world coordinate using exact analytical equations.
+        /// Returns both tissue base intensity (density) and material backscattering coefficient.
         /// </summary>
         public SampleResult EvaluateSample(Vector3 worldPos)
         {
@@ -96,7 +116,7 @@ namespace VirtualUltrasound.Volume
             float worldOrgan2Radius = Organ2Radius;
             if (PrimitiveShapes.IsInsideSphere(worldPos, worldOrgan2Center, worldOrgan2Radius))
             {
-                return new SampleResult(organ2Intensity, TissueType.Fluid);
+                return new SampleResult(organ2Intensity, organ2Scattering, TissueType.Fluid);
             }
 
             // Vessel (Tubular structure with echogenic wall & anechoic lumen)
@@ -108,9 +128,9 @@ namespace VirtualUltrasound.Volume
                 float lumenRadius = Mathf.Max(0.001f, worldVesselOuterRadius - VesselWallThickness);
                 if (PrimitiveShapes.IsInsideCylinder(worldPos, worldVesselStart, worldVesselEnd, lumenRadius))
                 {
-                    return new SampleResult(vesselLumenIntensity, TissueType.Fluid);
+                    return new SampleResult(vesselLumenIntensity, vesselLumenScattering, TissueType.Fluid);
                 }
-                return new SampleResult(vesselWallIntensity, TissueType.Bone); // highly reflective wall
+                return new SampleResult(vesselWallIntensity, vesselWallScattering, TissueType.Bone);
             }
 
             // Organ 1 (Hyperechoic spherical lesion / organ)
@@ -118,11 +138,11 @@ namespace VirtualUltrasound.Volume
             float worldOrgan1Radius = Organ1Radius;
             if (PrimitiveShapes.IsInsideSphere(worldPos, worldOrgan1Center, worldOrgan1Radius))
             {
-                return new SampleResult(organ1Intensity, TissueType.Organ1);
+                return new SampleResult(organ1Intensity, organ1Scattering, TissueType.Organ1);
             }
 
             // 3. Surrounding body tissue
-            return new SampleResult(bodyIntensity, TissueType.BodyTissue);
+            return new SampleResult(bodyIntensity, bodyScattering, TissueType.BodyTissue);
         }
     }
 }

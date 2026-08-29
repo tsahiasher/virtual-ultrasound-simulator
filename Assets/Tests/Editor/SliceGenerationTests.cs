@@ -108,5 +108,45 @@ namespace VirtualUltrasound.Tests
             Assert.AreEqual(0f, displayBuffer.Intensities[10 * 32 + 10]);
             Assert.AreEqual(0, displayBuffer.Pixels[10 * 32 + 10].r);
         }
+
+        [Test]
+        public void GPUVolumeData_BakesTextureAndMapsWorldBounds()
+        {
+            GPUVolumeData gpuVol = host.AddComponent<GPUVolumeData>();
+            gpuVol.SetSourceVolume(volume);
+            gpuVol.BakeFromSource();
+
+            Assert.IsNotNull(gpuVol.VolumeTexture);
+            Assert.AreEqual(128, gpuVol.VolumeTexture.width);
+            Assert.AreEqual(128, gpuVol.VolumeTexture.height);
+            Assert.AreEqual(128, gpuVol.VolumeTexture.depth);
+
+            // Center of volume should map to normalized UVW (0.5, 0.5, 0.5)
+            Vector3 centerUVW = gpuVol.WorldToVolumeUVW(volume.WorldBounds.Center);
+            Assert.AreEqual(0.5f, centerUVW.x, 1e-3f);
+            Assert.AreEqual(0.5f, centerUVW.y, 1e-3f);
+            Assert.AreEqual(0.5f, centerUVW.z, 1e-3f);
+        }
+
+        [Test]
+        public void AppearanceSettings_AcquirePolarData_ProducesValidBModeSignal()
+        {
+            Vector3 probePos = new Vector3(0f, 0.10f, 0f);
+            Quaternion probeRot = Quaternion.Euler(90f, 0f, 0f);
+
+            UltrasoundAppearanceSettings app = UltrasoundAppearanceSettings.Default;
+            generator.AcquirePolarData(probePos, probeRot, 0.05f, 0.10f, ProbeType.Linear, 0f, 0f, sampler, polarBuffer, app);
+
+            // Polar samples should be in [0, 1] range
+            for (int i = 0; i < polarBuffer.Lines; i++)
+            {
+                for (int j = 0; j < polarBuffer.Samples; j++)
+                {
+                    float s = polarBuffer.GetSample(i, j);
+                    Assert.GreaterOrEqual(s, 0.0f);
+                    Assert.LessOrEqual(s, 1.0f);
+                }
+            }
+        }
     }
 }

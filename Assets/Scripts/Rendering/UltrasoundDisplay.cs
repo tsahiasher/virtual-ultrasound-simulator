@@ -4,8 +4,8 @@ using UnityEngine.UI;
 namespace VirtualUltrasound.Rendering
 {
     /// <summary>
-    /// UI component that presents the 2D ultrasound slice image with medical ultrasound overlays
-    /// (orientation marker dot, depth scale tick marks, and aspect ratio preservation).
+    /// UI component that presents the 2D ultrasound slice image with medical ultrasound overlays.
+    /// Supports both Texture2D (CPU reference) and RenderTexture (GPU acceleration) seamlessly.
     /// </summary>
     [RequireComponent(typeof(RawImage))]
     public class UltrasoundDisplay : MonoBehaviour
@@ -26,9 +26,9 @@ namespace VirtualUltrasound.Rendering
             if (sliceRenderer != null)
             {
                 sliceRenderer.OnTextureUpdated += HandleTextureUpdated;
-                if (sliceRenderer.SliceTexture != null)
+                if (sliceRenderer.ActiveTexture != null)
                 {
-                    HandleTextureUpdated(sliceRenderer.SliceTexture);
+                    HandleTextureUpdated(sliceRenderer.ActiveTexture);
                 }
             }
         }
@@ -52,9 +52,9 @@ namespace VirtualUltrasound.Rendering
             if (sliceRenderer != null)
             {
                 sliceRenderer.OnTextureUpdated += HandleTextureUpdated;
-                if (sliceRenderer.SliceTexture != null)
+                if (sliceRenderer.ActiveTexture != null)
                 {
-                    HandleTextureUpdated(sliceRenderer.SliceTexture);
+                    HandleTextureUpdated(sliceRenderer.ActiveTexture);
                 }
             }
         }
@@ -70,18 +70,18 @@ namespace VirtualUltrasound.Rendering
                 }
             }
 
-            if (targetImage != null && sliceRenderer != null && sliceRenderer.SliceTexture != null && targetImage.texture != sliceRenderer.SliceTexture)
+            if (targetImage != null && sliceRenderer != null && sliceRenderer.ActiveTexture != null && targetImage.texture != sliceRenderer.ActiveTexture)
             {
-                targetImage.texture = sliceRenderer.SliceTexture;
+                HandleTextureUpdated(sliceRenderer.ActiveTexture);
             }
         }
 
-        private void HandleTextureUpdated(Texture2D texture)
+        private void HandleTextureUpdated(Texture texture)
         {
             if (targetImage != null && texture != null)
             {
                 targetImage.texture = texture;
-                if (aspectFitter != null)
+                if (aspectFitter != null && texture.height > 0)
                 {
                     aspectFitter.aspectRatio = (float)texture.width / texture.height;
                 }

@@ -1,0 +1,476 @@
+#pragma kernel AcquireCurvilinear
+#pragma kernel AcquireLinear
+#pragma kernel ScanConvertCurvilinear
+#pragma kernel ScanConvertLinear
+#pragma kernel ComputeDifference
+
+// -------------------------------------------------------------
+// Texture Resources & Samplers
+// -------------------------------------------------------------
+Texture3D<float4> _VolumeTexture;
+SamplerState sampler_VolumeTexture;
+
+RWTexture2D<float> _PolarBufferOutput;
+Texture2D<float> _PolarBufferInput;
+SamplerState sampler_PolarBufferInput;
+
+RWTexture2D<float4> _DisplayOutput;
+
+Texture2D<float4> _SourceTextureA;
+Texture2D<float4> _SourceTextureB;
+RWTexture2D<float4> _DiffOutput;
+
+// -------------------------------------------------------------
+// Uniform Parameters — Acquisition & Geometry
+// -------------------------------------------------------------
+int _ScanLines;
+int _SamplesPerScanLine;
+int _SliceWidth;
+int _SliceHeight;
+
+float3 _ProbePos;
+float4x4 _ProbeRotMatrix;
+
+float _ApertureWidth;
+float _MaxDepth;
+float _SectorAngleRad;
+float _ApexRadius;
+float _EffectiveLateralSpan;
+int _FilterMode; // 0 = Bilinear, 1 = Nearest
+
+float3 _VolumeBoundsMin;
+float3 _VolumeBoundsSize;
+float3 _VolumeResolution;
+
+// -------------------------------------------------------------
+// Analytical Synthetic Anatomy Parameters (Direct GPU Evaluation)
+// -------------------------------------------------------------
+int _UseAnalyticalVolume; // 1 = Direct continuous analytical geometry, 0 = Texture3D sampling
+
+float3 _BodyCenter;
+float3 _BodyRadii;
+float4 _BodyRotInv; // Inverse rotation quaternion
+float _BodyIntensity;
+float _BodyScattering;
+
+float3 _Organ1Center;
+float _Organ1Radius;
+float _Organ1Intensity;
+float _Organ1Scattering;
+
+float3 _Organ2Center;
+float _Organ2Radius;
+float _Organ2Intensity;
+float _Organ2Scattering;
+
+float3 _VesselStart;
+float3 _VesselEnd;
+float _VesselOuterRadius;
+float _VesselWallThickness;
+float _VesselWallIntensity;
+float _VesselWallScattering;
+float _VesselLumenIntensity;
+float _VesselLumenScattering;
+
+// -------------------------------------------------------------
+// Uniform Parameters — B-Mode Ultrasound Appearance (Phase 4)
+// -------------------------------------------------------------
+int _AppearanceEnabled; // 1 = Enabled, 0 = Raw Phase 3 baseline
+int _DebugView;          // 0 = Final, 1 = Raw, 2 = Boundary, 3 = SpeckleScatter
+float _Gain;
+float _BoundaryStrength;
+float _SpeckleStrength;
+float _SpeckleScale;
+float _DepthAttenuation;
+float _CompressionRatio;
+
+// -------------------------------------------------------------
+// 3D Spatially Coherent Deterministic Noise
+// -------------------------------------------------------------
+float Hash31(float3 p)
+{
+    p = frac(p * 0.1031);
+    p += dot(p, p.zyx + 31.32);
+    return frac((p.x + p.y) * p.z);
+}
+
+float CoherentNoise3D(float3 pos, float scale)
+{
+    float3 p = pos * scale;
+    float3 i = floor(p);
+    float3 f = frac(p);
+    float3 u = f * f * (3.0 - 2.0 * f);
+
+    float n000 = Hash31(i + float3(0.0, 0.0, 0.0));
+    float n100 = Hash31(i + float3(1.0, 0.0, 0.0));
+    float n010 = Hash31(i + float3(0.0, 1.0, 0.0));
+    float n110 = Hash31(i + float3(1.0, 1.0, 0.0));
+    float n001 = Hash31(i + float3(0.0, 0.0, 1.0));
+    float n101 = Hash31(i + float3(1.0, 0.0, 1.0));
+    float n011 = Hash31(i + float3(0.0, 1.0, 1.0));
+    float n111 = Hash31(i + float3(1.0, 1.0, 1.0));
+
+    float nx00 = lerp(n000, n100, u.x);
+    float nx10 = lerp(n010, n110, u.x);
+    float nx01 = lerp(n001, n101, u.x);
+    float nx11 = lerp(n011, n111, u.x);
+
+    float nxy0 = lerp(nx00, nx10, u.y);
+    float nxy1 = lerp(nx01, nx11, u.y);
+
+    float val = lerp(nxy0, nxy1, u.z);
+    return (val * 2.0) - 1.0; // Normalized range [-1.0, +1.0]
+}
+
+// -------------------------------------------------------------
+// Analytical Anatomy Evaluation (100% Identical to CPU Logic)
+// -------------------------------------------------------------
+struct AnatomySample
+{
+    float density;
+    float scatter;
+};
+
+float3 RotateVectorByQuat(float4 q, float3 v)
+{
+    float3 t = 2.0 * cross(q.xyz, v);
+    return v + q.w * t + cross(q.xyz, t);
+}
+
+float DistPointToSegment(float3 p, float3 a, float3 b)
+{
+    float3 pa = p - a;
+    float3 ba = b - a;
+    float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+    return length(pa - ba * h);
+}
+
+AnatomySample EvaluateAnalyticalSample(float3 pW)
+{
+    AnatomySample s;
+    s.density = 0.0;
+    s.scatter = 0.0;
+
+    // 1. Check Body Ellipsoid
+    float3 localP = RotateVectorByQuat(_BodyRotInv, pW - _BodyCenter);
+    float3 scaledP = localP / max(float3(1e-4, 1e-4, 1e-4), _BodyRadii);
+    if (dot(scaledP, scaledP) > 1.0)
+    {
+        return s; // Outside body -> 0.0
+    }
+
+    // 2. Check inner high-priority structures in exact CPU order:
+    // Organ 2 (Anechoic cyst / fluid cavity)
+    if (length(pW - _Organ2Center) <= _Organ2Radius)
+    {
+        s.density = _Organ2Intensity;
+        s.scatter = _Organ2Scattering;
+        return s;
+    }
+
+    // Vessel (Tubular structure with echogenic wall & anechoic lumen)
+    float distVessel = DistPointToSegment(pW, _VesselStart, _VesselEnd);
+    if (distVessel <= _VesselOuterRadius)
+    {
+        float lumenRadius = max(0.001, _VesselOuterRadius - _VesselWallThickness);
+        if (distVessel <= lumenRadius)
+        {
+            s.density = _VesselLumenIntensity;
+            s.scatter = _VesselLumenScattering;
+            return s;
+        }
+        s.density = _VesselWallIntensity;
+        s.scatter = _VesselWallScattering;
+        return s;
+    }
+
+    // Organ 1 (Hyperechoic spherical lesion / organ)
+    if (length(pW - _Organ1Center) <= _Organ1Radius)
+    {
+        s.density = _Organ1Intensity;
+        s.scatter = _Organ1Scattering;
+        return s;
+    }
+
+    // Surrounding body tissue
+    s.density = _BodyIntensity;
+    s.scatter = _BodyScattering;
+    return s;
+}
+
+float3 CalculateAnalyticalGradient(float3 pW)
+{
+    float h = 0.002; // 2mm finite difference step (identical to CPU)
+    float dx = (EvaluateAnalyticalSample(pW + float3(h, 0.0, 0.0)).density - EvaluateAnalyticalSample(pW - float3(h, 0.0, 0.0)).density) / (2.0 * h);
+    float dy = (EvaluateAnalyticalSample(pW + float3(0.0, h, 0.0)).density - EvaluateAnalyticalSample(pW - float3(0.0, h, 0.0)).density) / (2.0 * h);
+    float dz = (EvaluateAnalyticalSample(pW + float3(0.0, 0.0, h)).density - EvaluateAnalyticalSample(pW - float3(0.0, 0.0, h)).density) / (2.0 * h);
+    return float3(dx, dy, dz);
+}
+
+// -------------------------------------------------------------
+// 3D Spatial Gradient Estimation for Discrete Texture3D Fallback
+// -------------------------------------------------------------
+float3 CalculateVolumeTextureGradient(float3 uvw)
+{
+    float3 res = max(float3(16.0, 16.0, 16.0), _VolumeResolution);
+    float3 stepUVW = 1.0 / res;
+    float dx = _VolumeTexture.SampleLevel(sampler_VolumeTexture, uvw + float3(stepUVW.x, 0.0, 0.0), 0).r -
+               _VolumeTexture.SampleLevel(sampler_VolumeTexture, uvw - float3(stepUVW.x, 0.0, 0.0), 0).r;
+    float dy = _VolumeTexture.SampleLevel(sampler_VolumeTexture, uvw + float3(0.0, stepUVW.y, 0.0), 0).r -
+               _VolumeTexture.SampleLevel(sampler_VolumeTexture, uvw - float3(0.0, stepUVW.y, 0.0), 0).r;
+    float dz = _VolumeTexture.SampleLevel(sampler_VolumeTexture, uvw + float3(0.0, 0.0, stepUVW.z), 0).r -
+               _VolumeTexture.SampleLevel(sampler_VolumeTexture, uvw - float3(0.0, 0.0, stepUVW.z), 0).r;
+    return float3(dx, dy, dz) * 0.5 * res;
+}
+
+// -------------------------------------------------------------
+// Polar Acoustic Signal Formation
+// -------------------------------------------------------------
+float FormUltrasoundSignal(float density, float scatter, float gradMagnitude, float3 pW, float zAxial)
+{
+    if (_AppearanceEnabled == 0 || _DebugView == 1)
+    {
+        return density; // Raw Anatomical Mode
+    }
+
+    // 1. Boundary / Interface Reflection Response
+    float boundaryEcho = gradMagnitude * 0.015 * _BoundaryStrength;
+
+    // 2. 3D Spatially Coherent Speckle & Tissue Scattering
+    float noise = CoherentNoise3D(pW, _SpeckleScale);
+    float speckleScatter = scatter * max(0.0, 1.0 + (_SpeckleStrength * noise));
+
+    // Debug view bypasses
+    if (_DebugView == 2) return saturate(boundaryEcho * _Gain);
+    if (_DebugView == 3) return saturate(speckleScatter * _Gain);
+
+    // 3. Combined Raw Echo
+    float rawEcho = boundaryEcho + speckleScatter;
+
+    // 4. Simple Depth Attenuation along axial beam depth
+    float attenuationFactor = exp(-_DepthAttenuation * zAxial);
+    float attenuatedEcho = rawEcho * attenuationFactor;
+
+    // 5. System Gain
+    float gainedEcho = attenuatedEcho * _Gain;
+
+    // 6. Dynamic Range Compression (Logarithmic response)
+    float comp = max(1.0, _CompressionRatio);
+    float compressed = log(1.0 + (comp * gainedEcho)) / log(1.0 + comp);
+
+    return saturate(compressed);
+}
+
+// -------------------------------------------------------------
+// Kernel 0: Curvilinear Polar Acquisition
+// -------------------------------------------------------------
+[numthreads(8, 8, 1)]
+void AcquireCurvilinear(uint3 id : SV_DispatchThreadID)
+{
+    if ((int)id.x >= _ScanLines || (int)id.y >= _SamplesPerScanLine)
+        return;
+
+    float invLines = _ScanLines > 1 ? 1.0 / float(_ScanLines - 1) : 0.0;
+    float invSamples = _SamplesPerScanLine > 1 ? 1.0 / float(_SamplesPerScanLine - 1) : 0.0;
+
+    float u = float(id.x) * invLines;
+    float v = float(id.y) * invSamples;
+
+    float halfAngleRad = _SectorAngleRad * 0.5;
+    float angleRad = lerp(-halfAngleRad, halfAngleRad, u);
+    float zAxial = v * _MaxDepth;
+    float r = _ApexRadius + zAxial;
+
+    float sinA, cosA;
+    sincos(angleRad, sinA, cosA);
+
+    float xP = r * sinA;
+    float yP = 0.0;
+    float zP = (r * cosA) - _ApexRadius;
+
+    float3 pP = float3(xP, yP, zP);
+    float3 pW = _ProbePos + mul(_ProbeRotMatrix, float4(pP, 0.0)).xyz;
+
+    float density = 0.0;
+    float scatter = 0.0;
+    float gradMag = 0.0;
+
+    if (_UseAnalyticalVolume == 1)
+    {
+        AnatomySample sample = EvaluateAnalyticalSample(pW);
+        density = sample.density;
+        scatter = sample.scatter;
+        gradMag = length(CalculateAnalyticalGradient(pW));
+    }
+    else
+    {
+        float3 uvw = (pW - _VolumeBoundsMin) / _VolumeBoundsSize;
+        if (uvw.x >= 0.0 && uvw.x <= 1.0 &&
+            uvw.y >= 0.0 && uvw.y <= 1.0 &&
+            uvw.z >= 0.0 && uvw.z <= 1.0)
+        {
+            float4 volSample = _VolumeTexture.SampleLevel(sampler_VolumeTexture, uvw, 0);
+            density = volSample.r;
+            scatter = volSample.g;
+            gradMag = length(CalculateVolumeTextureGradient(uvw));
+        }
+    }
+
+    float intensity = FormUltrasoundSignal(density, scatter, gradMag, pW, zAxial);
+    _PolarBufferOutput[id.xy] = intensity;
+}
+
+// -------------------------------------------------------------
+// Kernel 1: Linear Polar Acquisition
+// -------------------------------------------------------------
+[numthreads(8, 8, 1)]
+void AcquireLinear(uint3 id : SV_DispatchThreadID)
+{
+    if ((int)id.x >= _ScanLines || (int)id.y >= _SamplesPerScanLine)
+        return;
+
+    float invLines = _ScanLines > 1 ? 1.0 / float(_ScanLines - 1) : 0.0;
+    float invSamples = _SamplesPerScanLine > 1 ? 1.0 / float(_SamplesPerScanLine - 1) : 0.0;
+
+    float u = float(id.x) * invLines;
+    float v = float(id.y) * invSamples;
+
+    float halfW = _ApertureWidth * 0.5;
+    float xP = lerp(-halfW, halfW, u);
+    float yP = 0.0;
+    float zAxial = v * _MaxDepth;
+    float zP = zAxial;
+
+    float3 pP = float3(xP, yP, zP);
+    float3 pW = _ProbePos + mul(_ProbeRotMatrix, float4(pP, 0.0)).xyz;
+
+    float density = 0.0;
+    float scatter = 0.0;
+    float gradMag = 0.0;
+
+    if (_UseAnalyticalVolume == 1)
+    {
+        AnatomySample sample = EvaluateAnalyticalSample(pW);
+        density = sample.density;
+        scatter = sample.scatter;
+        gradMag = length(CalculateAnalyticalGradient(pW));
+    }
+    else
+    {
+        float3 uvw = (pW - _VolumeBoundsMin) / _VolumeBoundsSize;
+        if (uvw.x >= 0.0 && uvw.x <= 1.0 &&
+            uvw.y >= 0.0 && uvw.y <= 1.0 &&
+            uvw.z >= 0.0 && uvw.z <= 1.0)
+        {
+            float4 volSample = _VolumeTexture.SampleLevel(sampler_VolumeTexture, uvw, 0);
+            density = volSample.r;
+            scatter = volSample.g;
+            gradMag = length(CalculateVolumeTextureGradient(uvw));
+        }
+    }
+
+    float intensity = FormUltrasoundSignal(density, scatter, gradMag, pW, zAxial);
+    _PolarBufferOutput[id.xy] = intensity;
+}
+
+// -------------------------------------------------------------
+// Kernel 2: Curvilinear Cartesian Scan Conversion
+// -------------------------------------------------------------
+[numthreads(8, 8, 1)]
+void ScanConvertCurvilinear(uint3 id : SV_DispatchThreadID)
+{
+    if ((int)id.x >= _SliceWidth || (int)id.y >= _SliceHeight)
+        return;
+
+    float invWidth = _SliceWidth > 1 ? 1.0 / float(_SliceWidth - 1) : 0.0;
+    float invHeight = _SliceHeight > 1 ? 1.0 / float(_SliceHeight - 1) : 0.0;
+
+    // Flip Y so probe face is at the top of the display screen
+    float v = float((_SliceHeight - 1) - id.y) * invHeight;
+    float u = (float(id.x) * invWidth) - 0.5;
+
+    float xP = u * _EffectiveLateralSpan;
+    float zP = v * _MaxDepth;
+    float zApex = zP + _ApexRadius;
+
+    float r = sqrt((xP * xP) + (zApex * zApex));
+    float angleRad = atan2(xP, zApex);
+    float halfAngleRad = _SectorAngleRad * 0.5;
+
+    // Sector boundary mask check
+    if (abs(angleRad) > halfAngleRad || r < _ApexRadius || r > (_ApexRadius + _MaxDepth))
+    {
+        _DisplayOutput[id.xy] = float4(0.0, 0.0, 0.0, 1.0);
+    }
+    else
+    {
+        float totalAngleRad = _SectorAngleRad;
+        float uPolar = (angleRad + halfAngleRad) / totalAngleRad;
+        float vPolar = (r - _ApexRadius) / _MaxDepth;
+
+        float intensity = 0.0;
+        if (_FilterMode == 0) // Bilinear
+        {
+            intensity = _PolarBufferInput.SampleLevel(sampler_PolarBufferInput, float2(uPolar, vPolar), 0).r;
+        }
+        else // Nearest
+        {
+            int pX = clamp((int)round(uPolar * float(_ScanLines - 1)), 0, _ScanLines - 1);
+            int pY = clamp((int)round(vPolar * float(_SamplesPerScanLine - 1)), 0, _SamplesPerScanLine - 1);
+            intensity = _PolarBufferInput[uint2(pX, pY)].r;
+        }
+
+        _DisplayOutput[id.xy] = float4(intensity, intensity, intensity, 1.0);
+    }
+}
+
+// -------------------------------------------------------------
+// Kernel 3: Linear Cartesian Scan Conversion
+// -------------------------------------------------------------
+[numthreads(8, 8, 1)]
+void ScanConvertLinear(uint3 id : SV_DispatchThreadID)
+{
+    if ((int)id.x >= _SliceWidth || (int)id.y >= _SliceHeight)
+        return;
+
+    float invWidth = _SliceWidth > 1 ? 1.0 / float(_SliceWidth - 1) : 0.0;
+    float invHeight = _SliceHeight > 1 ? 1.0 / float(_SliceHeight - 1) : 0.0;
+
+    float u = float(id.x) * invWidth;
+    float v = float((_SliceHeight - 1) - id.y) * invHeight;
+
+    float intensity = 0.0;
+    if (_FilterMode == 0)
+    {
+        intensity = _PolarBufferInput.SampleLevel(sampler_PolarBufferInput, float2(u, v), 0).r;
+    }
+    else
+    {
+        int pX = clamp((int)round(u * float(_ScanLines - 1)), 0, _ScanLines - 1);
+        int pY = clamp((int)round(v * float(_SamplesPerScanLine - 1)), 0, _SamplesPerScanLine - 1);
+        intensity = _PolarBufferInput[uint2(pX, pY)].r;
+    }
+
+    _DisplayOutput[id.xy] = float4(intensity, intensity, intensity, 1.0);
+}
+
+// -------------------------------------------------------------
+// Kernel 4: Compute Image Difference & Heatmap
+// -------------------------------------------------------------
+[numthreads(8, 8, 1)]
+void ComputeDifference(uint3 id : SV_DispatchThreadID)
+{
+    if ((int)id.x >= _SliceWidth || (int)id.y >= _SliceHeight)
+        return;
+
+    float4 colA = _SourceTextureA[id.xy];
+    float4 colB = _SourceTextureB[id.xy];
+
+    float diff = abs(colA.r - colB.r);
+
+    // Heatmap: amplified difference
+    float3 heatColor = float3(saturate(diff * 5.0), saturate(diff * 2.0), 0.0);
+    if (diff < 1e-4) heatColor = float3(0.0, 0.0, 0.0);
+
+    _DiffOutput[id.xy] = float4(heatColor, 1.0);
+}
