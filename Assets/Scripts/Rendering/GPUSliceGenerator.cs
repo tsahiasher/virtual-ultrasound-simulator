@@ -175,16 +175,19 @@ namespace VirtualUltrasound.Rendering
                 computeShader.SetVector("_BodyRotInv", new Vector4(invRot.x, invRot.y, invRot.z, invRot.w));
                 computeShader.SetFloat("_BodyIntensity", anatomyVolume.BodyIntensity);
                 computeShader.SetFloat("_BodyScattering", anatomyVolume.BodyScattering);
+                computeShader.SetFloat("_BodyAttenuation", anatomyVolume.BodyAttenuation);
 
                 computeShader.SetVector("_Organ1Center", anatomyVolume.Organ1Center);
                 computeShader.SetFloat("_Organ1Radius", anatomyVolume.Organ1Radius);
                 computeShader.SetFloat("_Organ1Intensity", anatomyVolume.Organ1Intensity);
                 computeShader.SetFloat("_Organ1Scattering", anatomyVolume.Organ1Scattering);
+                computeShader.SetFloat("_Organ1Attenuation", anatomyVolume.Organ1Attenuation);
 
                 computeShader.SetVector("_Organ2Center", anatomyVolume.Organ2Center);
                 computeShader.SetFloat("_Organ2Radius", anatomyVolume.Organ2Radius);
                 computeShader.SetFloat("_Organ2Intensity", anatomyVolume.Organ2Intensity);
                 computeShader.SetFloat("_Organ2Scattering", anatomyVolume.Organ2Scattering);
+                computeShader.SetFloat("_Organ2Attenuation", anatomyVolume.Organ2Attenuation);
 
                 computeShader.SetVector("_VesselStart", anatomyVolume.VesselStart);
                 computeShader.SetVector("_VesselEnd", anatomyVolume.VesselEnd);
@@ -192,27 +195,29 @@ namespace VirtualUltrasound.Rendering
                 computeShader.SetFloat("_VesselWallThickness", anatomyVolume.VesselWallThickness);
                 computeShader.SetFloat("_VesselWallIntensity", anatomyVolume.VesselWallIntensity);
                 computeShader.SetFloat("_VesselWallScattering", anatomyVolume.VesselWallScattering);
+                computeShader.SetFloat("_VesselWallAttenuation", anatomyVolume.VesselWallAttenuation);
                 computeShader.SetFloat("_VesselLumenIntensity", anatomyVolume.VesselLumenIntensity);
                 computeShader.SetFloat("_VesselLumenScattering", anatomyVolume.VesselLumenScattering);
+                computeShader.SetFloat("_VesselLumenAttenuation", anatomyVolume.VesselLumenAttenuation);
             }
             else
             {
                 computeShader.SetInt("_UseAnalyticalVolume", 0);
             }
 
-            // B-Mode Appearance Uniforms (Phase 4)
+            // B-Mode Appearance Uniforms (Phase 4/5)
             computeShader.SetInt("_AppearanceEnabled", appearance.Enabled ? 1 : 0);
             computeShader.SetInt("_DebugView", (int)appearance.DebugView);
             computeShader.SetFloat("_Gain", appearance.Gain);
             computeShader.SetFloat("_BoundaryStrength", appearance.BoundaryStrength);
             computeShader.SetFloat("_SpeckleStrength", appearance.SpeckleStrength);
             computeShader.SetFloat("_SpeckleScale", appearance.SpeckleScale);
-            computeShader.SetFloat("_DepthAttenuation", appearance.DepthAttenuation);
+            computeShader.SetFloat("_AttenuationScale", appearance.AttenuationScale);
             computeShader.SetFloat("_CompressionRatio", appearance.CompressionRatio);
 
-            int threadGroupsX = Mathf.CeilToInt(scanLines / 8.0f);
-            int threadGroupsY = Mathf.CeilToInt(samplesPerScanLine / 8.0f);
-            computeShader.Dispatch(kernel, threadGroupsX, threadGroupsY, 1);
+            // Dispatch 1 thread per scan line across 64-thread groups
+            int threadGroupsX = Mathf.CeilToInt(scanLines / 64.0f);
+            computeShader.Dispatch(kernel, threadGroupsX, 1, 1);
         }
 
         /// <summary>

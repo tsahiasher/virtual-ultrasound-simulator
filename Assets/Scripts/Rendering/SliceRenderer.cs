@@ -370,7 +370,7 @@ namespace VirtualUltrasound.Rendering
 
         public void CycleDebugView()
         {
-            appearanceSettings.DebugView = (AppearanceDebugView)(((int)appearanceSettings.DebugView + 1) % 4);
+            appearanceSettings.DebugView = (AppearanceDebugView)(((int)appearanceSettings.DebugView + 1) % 5);
         }
 
         private void CalculateDifferenceMetrics()

@@ -56,11 +56,6 @@ namespace VirtualUltrasound.UI
 
         private void Update()
         {
-            if (probeGeometry == null || telemetryText == null)
-            {
-                FindReferences();
-            }
-
             // Keyboard shortcut for cycling render modes (GPU -> CPU Reference -> Difference)
             if (Input.GetKeyDown(KeyCode.M))
             {
@@ -113,6 +108,7 @@ namespace VirtualUltrasound.UI
                     AppearanceDebugView.RawAnatomical => "Raw",
                     AppearanceDebugView.BoundaryResponse => "Boundary",
                     AppearanceDebugView.SpeckleScattering => "Speckle",
+                    AppearanceDebugView.AccumulatedTransmission => "Shadow Transmission",
                     _ => "B-Mode"
                 };
 
@@ -143,7 +139,7 @@ namespace VirtualUltrasound.UI
 
                 var app = sliceRenderer.AppearanceSettings;
                 string appDetails = app.Enabled
-                    ? $"<b>Appearance:</b> <color=#f59e0b>{app.DebugView}</color> | Gain {app.Gain:F1}x | Atten {app.DepthAttenuation:F1}m⁻¹ | Speckle {app.SpeckleStrength:P0}"
+                    ? $"<b>Appearance:</b> <color=#f59e0b>{app.DebugView}</color> | Gain {app.Gain:F1}x | AttenScale {app.AttenuationScale:F1}x | Speckle {app.SpeckleStrength:P0}"
                     : "<b>Appearance:</b> <color=#94a3b8>Disabled (Raw Grayscale)</color>";
 
                 telemetryText.text =

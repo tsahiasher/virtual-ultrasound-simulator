@@ -51,6 +51,7 @@ namespace VirtualUltrasound.Rendering
 
             float invLinesMinusOne = lines > 1 ? 1.0f / (lines - 1) : 0f;
             float invSamplesMinusOne = samples > 1 ? 1.0f / (samples - 1) : 0f;
+            float deltaZ = samples > 1 ? maxDepth * invSamplesMinusOne : 0f;
 
             if (probeType == ProbeType.Linear)
             {
@@ -60,6 +61,7 @@ namespace VirtualUltrasound.Rendering
                 {
                     float u = i * invLinesMinusOne;
                     float xP = Mathf.Lerp(-halfW, halfW, u);
+                    float cumOpticalDepth = 0f;
 
                     for (int j = 0; j < samples; j++)
                     {
@@ -70,8 +72,12 @@ namespace VirtualUltrasound.Rendering
                         Vector3 pW = CoordinateTransform.ProbeToWorld(pP, probePos, probeRot);
 
                         SampleResult result = sampler.SampleWorld(pW);
-                        float signal = FormSignal(result, pW, zAxial, sampler, appearance);
+                        float roundTripTransmission = MathF.Exp(-2.0f * cumOpticalDepth);
+
+                        float signal = FormSignal(result, pW, roundTripTransmission, sampler, appearance);
                         polarBuffer.SetSample(i, j, signal);
+
+                        cumOpticalDepth += result.Attenuation * deltaZ * appearance.AttenuationScale;
                     }
                 }
             }
@@ -86,6 +92,7 @@ namespace VirtualUltrasound.Rendering
 
                     float sinA = Mathf.Sin(angleRad);
                     float cosA = Mathf.Cos(angleRad);
+                    float cumOpticalDepth = 0f;
 
                     for (int j = 0; j < samples; j++)
                     {
@@ -100,14 +107,18 @@ namespace VirtualUltrasound.Rendering
                         Vector3 pW = CoordinateTransform.ProbeToWorld(pP, probePos, probeRot);
 
                         SampleResult result = sampler.SampleWorld(pW);
-                        float signal = FormSignal(result, pW, zAxial, sampler, appearance);
+                        float roundTripTransmission = MathF.Exp(-2.0f * cumOpticalDepth);
+
+                        float signal = FormSignal(result, pW, roundTripTransmission, sampler, appearance);
                         polarBuffer.SetSample(i, j, signal);
+
+                        cumOpticalDepth += result.Attenuation * deltaZ * appearance.AttenuationScale;
                     }
                 }
             }
         }
 
-        private float FormSignal(SampleResult sample, Vector3 pW, float zAxial, IVolumeSampler sampler, UltrasoundAppearanceSettings app)
+        private float FormSignal(SampleResult sample, Vector3 pW, float roundTripTransmission, IVolumeSampler sampler, UltrasoundAppearanceSettings app)
         {
             if (!app.Enabled || app.DebugView == AppearanceDebugView.RawAnatomical)
             {
@@ -129,13 +140,13 @@ namespace VirtualUltrasound.Rendering
             // Debug view inspection bypasses
             if (app.DebugView == AppearanceDebugView.BoundaryResponse) return Mathf.Clamp01(boundaryEcho * app.Gain);
             if (app.DebugView == AppearanceDebugView.SpeckleScattering) return Mathf.Clamp01(speckleScatter * app.Gain);
+            if (app.DebugView == AppearanceDebugView.AccumulatedTransmission) return Mathf.Clamp01(roundTripTransmission);
 
             // 3. Combined Raw Echo
             float rawEcho = boundaryEcho + speckleScatter;
 
-            // 4. Depth Attenuation along axial acoustic depth
-            float attenuationFactor = MathF.Exp(-app.DepthAttenuation * zAxial);
-            float attenuatedEcho = rawEcho * attenuationFactor;
+            // 4. Cumulative Round-Trip Pulse-Echo Attenuation
+            float attenuatedEcho = rawEcho * roundTripTransmission;
 
             // 5. System Gain
             float gainedEcho = attenuatedEcho * app.Gain;

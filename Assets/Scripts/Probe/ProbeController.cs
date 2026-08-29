@@ -27,11 +27,13 @@ namespace VirtualUltrasound.Probe
 
         private Vector3 targetPosition;
         private Quaternion targetRotation;
+        private ProbeGeometry geom;
 
         public event Action<Vector3, Quaternion> OnProbePoseChanged;
 
         private void Start()
         {
+            geom = GetComponent<ProbeGeometry>();
             ResetToHome();
         }
 
@@ -144,7 +146,6 @@ namespace VirtualUltrasound.Probe
             if (Input.GetKeyDown(KeyCode.Alpha3)) SetCoronalView();
 
             // 4. Probe Geometry Parameter Tuning Hotkeys
-            ProbeGeometry geom = GetComponent<ProbeGeometry>();
             if (geom != null)
             {
                 // T: Toggle Probe Type (Curvilinear / Linear)

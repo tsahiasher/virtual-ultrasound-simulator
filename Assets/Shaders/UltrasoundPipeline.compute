@@ -52,16 +52,19 @@ float3 _BodyRadii;
 float4 _BodyRotInv; // Inverse rotation quaternion
 float _BodyIntensity;
 float _BodyScattering;
+float _BodyAttenuation;
 
 float3 _Organ1Center;
 float _Organ1Radius;
 float _Organ1Intensity;
 float _Organ1Scattering;
+float _Organ1Attenuation;
 
 float3 _Organ2Center;
 float _Organ2Radius;
 float _Organ2Intensity;
 float _Organ2Scattering;
+float _Organ2Attenuation;
 
 float3 _VesselStart;
 float3 _VesselEnd;
@@ -69,19 +72,40 @@ float _VesselOuterRadius;
 float _VesselWallThickness;
 float _VesselWallIntensity;
 float _VesselWallScattering;
+float _VesselWallAttenuation;
 float _VesselLumenIntensity;
 float _VesselLumenScattering;
+float _VesselLumenAttenuation;
+
+// Phase 5 Validation Structures
+float3 _StrongAttenuatorCenter;
+float _StrongAttenuatorRadius;
+float _StrongAttenuatorIntensity;
+float _StrongAttenuatorScattering;
+float _StrongAttenuatorAttenuation;
+
+float3 _ShadowTargetCenter;
+float _ShadowTargetRadius;
+float _ShadowTargetIntensity;
+float _ShadowTargetScattering;
+float _ShadowTargetAttenuation;
+
+float3 _UnshadowedTargetCenter;
+float _UnshadowedTargetRadius;
+float _UnshadowedTargetIntensity;
+float _UnshadowedTargetScattering;
+float _UnshadowedTargetAttenuation;
 
 // -------------------------------------------------------------
-// Uniform Parameters — B-Mode Ultrasound Appearance (Phase 4)
+// Uniform Parameters — B-Mode Ultrasound Appearance (Phase 4/5)
 // -------------------------------------------------------------
 int _AppearanceEnabled; // 1 = Enabled, 0 = Raw Phase 3 baseline
-int _DebugView;          // 0 = Final, 1 = Raw, 2 = Boundary, 3 = SpeckleScatter
+int _DebugView;          // 0 = Final, 1 = Raw, 2 = Boundary, 3 = SpeckleScatter, 4 = AccumulatedTransmission
 float _Gain;
 float _BoundaryStrength;
 float _SpeckleStrength;
 float _SpeckleScale;
-float _DepthAttenuation;
+float _AttenuationScale;
 float _CompressionRatio;
 
 // -------------------------------------------------------------
@@ -129,6 +153,7 @@ struct AnatomySample
 {
     float density;
     float scatter;
+    float attenuation;
 };
 
 float3 RotateVectorByQuat(float4 q, float3 v)
@@ -150,25 +175,26 @@ AnatomySample EvaluateAnalyticalSample(float3 pW)
     AnatomySample s;
     s.density = 0.0;
     s.scatter = 0.0;
+    s.attenuation = 0.5;
 
     // 1. Check Body Ellipsoid
     float3 localP = RotateVectorByQuat(_BodyRotInv, pW - _BodyCenter);
     float3 scaledP = localP / max(float3(1e-4, 1e-4, 1e-4), _BodyRadii);
     if (dot(scaledP, scaledP) > 1.0)
     {
-        return s; // Outside body -> 0.0
+        return s; // Outside body
     }
 
-    // 2. Check inner high-priority structures in exact CPU order:
-    // Organ 2 (Anechoic cyst / fluid cavity)
+    // 2. Organ 2 (Anechoic cyst / fluid cavity - low attenuation, low scattering)
     if (length(pW - _Organ2Center) <= _Organ2Radius)
     {
         s.density = _Organ2Intensity;
         s.scatter = _Organ2Scattering;
+        s.attenuation = _Organ2Attenuation;
         return s;
     }
 
-    // Vessel (Tubular structure with echogenic wall & anechoic lumen)
+    // 3. Vessel (Tubular structure with echogenic wall & anechoic lumen)
     float distVessel = DistPointToSegment(pW, _VesselStart, _VesselEnd);
     if (distVessel <= _VesselOuterRadius)
     {
@@ -177,24 +203,28 @@ AnatomySample EvaluateAnalyticalSample(float3 pW)
         {
             s.density = _VesselLumenIntensity;
             s.scatter = _VesselLumenScattering;
+            s.attenuation = _VesselLumenAttenuation;
             return s;
         }
         s.density = _VesselWallIntensity;
         s.scatter = _VesselWallScattering;
+        s.attenuation = _VesselWallAttenuation;
         return s;
     }
 
-    // Organ 1 (Hyperechoic spherical lesion / organ)
+    // 4. Organ 1 (Hyperechoic spherical lesion / organ)
     if (length(pW - _Organ1Center) <= _Organ1Radius)
     {
         s.density = _Organ1Intensity;
         s.scatter = _Organ1Scattering;
+        s.attenuation = _Organ1Attenuation;
         return s;
     }
 
-    // Surrounding body tissue
+    // 5. Surrounding body tissue
     s.density = _BodyIntensity;
     s.scatter = _BodyScattering;
+    s.attenuation = _BodyAttenuation;
     return s;
 }
 
@@ -224,37 +254,37 @@ float3 CalculateVolumeTextureGradient(float3 uvw)
 }
 
 // -------------------------------------------------------------
-// Polar Acoustic Signal Formation
+// Signal Processing Helper
 // -------------------------------------------------------------
-float FormUltrasoundSignal(float density, float scatter, float gradMagnitude, float3 pW, float zAxial)
+float ProcessSignal(float density, float scatter, float gradMag, float roundTripTransmission, float3 pW)
 {
     if (_AppearanceEnabled == 0 || _DebugView == 1)
     {
         return density; // Raw Anatomical Mode
     }
 
-    // 1. Boundary / Interface Reflection Response
-    float boundaryEcho = gradMagnitude * 0.015 * _BoundaryStrength;
+    // 1. Boundary reflection
+    float boundaryEcho = gradMag * 0.015 * _BoundaryStrength;
 
-    // 2. 3D Spatially Coherent Speckle & Tissue Scattering
+    // 2. Coherent speckle noise
     float noise = CoherentNoise3D(pW, _SpeckleScale);
     float speckleScatter = scatter * max(0.0, 1.0 + (_SpeckleStrength * noise));
 
-    // Debug view bypasses
+    // Debug view inspection bypasses
     if (_DebugView == 2) return saturate(boundaryEcho * _Gain);
     if (_DebugView == 3) return saturate(speckleScatter * _Gain);
+    if (_DebugView == 4) return saturate(roundTripTransmission); // Phase 5 Accumulated Transmission Debug View
 
-    // 3. Combined Raw Echo
+    // 3. Combined raw echo
     float rawEcho = boundaryEcho + speckleScatter;
 
-    // 4. Simple Depth Attenuation along axial beam depth
-    float attenuationFactor = exp(-_DepthAttenuation * zAxial);
-    float attenuatedEcho = rawEcho * attenuationFactor;
+    // 4. Cumulative round-trip pulse-echo attenuation
+    float attenuatedEcho = rawEcho * roundTripTransmission;
 
-    // 5. System Gain
+    // 5. System gain
     float gainedEcho = attenuatedEcho * _Gain;
 
-    // 6. Dynamic Range Compression (Logarithmic response)
+    // 6. Dynamic range compression
     float comp = max(1.0, _CompressionRatio);
     float compressed = log(1.0 + (comp * gainedEcho)) / log(1.0 + comp);
 
@@ -262,115 +292,145 @@ float FormUltrasoundSignal(float density, float scatter, float gradMagnitude, fl
 }
 
 // -------------------------------------------------------------
-// Kernel 0: Curvilinear Polar Acquisition
+// Kernel 0: Curvilinear Polar Acquisition (1D Scanline Ray-Marching)
 // -------------------------------------------------------------
-[numthreads(8, 8, 1)]
+[numthreads(64, 1, 1)]
 void AcquireCurvilinear(uint3 id : SV_DispatchThreadID)
 {
-    if ((int)id.x >= _ScanLines || (int)id.y >= _SamplesPerScanLine)
+    uint lineIdx = id.x;
+    if ((int)lineIdx >= _ScanLines)
         return;
 
     float invLines = _ScanLines > 1 ? 1.0 / float(_ScanLines - 1) : 0.0;
     float invSamples = _SamplesPerScanLine > 1 ? 1.0 / float(_SamplesPerScanLine - 1) : 0.0;
+    float deltaZ = _SamplesPerScanLine > 1 ? _MaxDepth * invSamples : 0.0;
 
-    float u = float(id.x) * invLines;
-    float v = float(id.y) * invSamples;
-
+    float u = float(lineIdx) * invLines;
     float halfAngleRad = _SectorAngleRad * 0.5;
     float angleRad = lerp(-halfAngleRad, halfAngleRad, u);
-    float zAxial = v * _MaxDepth;
-    float r = _ApexRadius + zAxial;
 
     float sinA, cosA;
     sincos(angleRad, sinA, cosA);
 
-    float xP = r * sinA;
-    float yP = 0.0;
-    float zP = (r * cosA) - _ApexRadius;
+    float cumOpticalDepth = 0.0;
 
-    float3 pP = float3(xP, yP, zP);
-    float3 pW = _ProbePos + mul(_ProbeRotMatrix, float4(pP, 0.0)).xyz;
-
-    float density = 0.0;
-    float scatter = 0.0;
-    float gradMag = 0.0;
-
-    if (_UseAnalyticalVolume == 1)
+    for (int s = 0; s < _SamplesPerScanLine; s++)
     {
-        AnatomySample sample = EvaluateAnalyticalSample(pW);
-        density = sample.density;
-        scatter = sample.scatter;
-        gradMag = length(CalculateAnalyticalGradient(pW));
-    }
-    else
-    {
-        float3 uvw = (pW - _VolumeBoundsMin) / _VolumeBoundsSize;
-        if (uvw.x >= 0.0 && uvw.x <= 1.0 &&
-            uvw.y >= 0.0 && uvw.y <= 1.0 &&
-            uvw.z >= 0.0 && uvw.z <= 1.0)
+        float v = float(s) * invSamples;
+        float zAxial = v * _MaxDepth;
+        float r = _ApexRadius + zAxial;
+
+        float xP = r * sinA;
+        float yP = 0.0;
+        float zP = (r * cosA) - _ApexRadius;
+
+        float3 pP = float3(xP, yP, zP);
+        float3 pW = _ProbePos + mul(_ProbeRotMatrix, float4(pP, 0.0)).xyz;
+
+        float density = 0.0;
+        float scatter = 0.0;
+        float attenuation = 0.5;
+        float gradMag = 0.0;
+
+        if (_UseAnalyticalVolume == 1)
         {
-            float4 volSample = _VolumeTexture.SampleLevel(sampler_VolumeTexture, uvw, 0);
-            density = volSample.r;
-            scatter = volSample.g;
-            gradMag = length(CalculateVolumeTextureGradient(uvw));
+            AnatomySample samp = EvaluateAnalyticalSample(pW);
+            density = samp.density;
+            scatter = samp.scatter;
+            attenuation = samp.attenuation;
+            gradMag = length(CalculateAnalyticalGradient(pW));
         }
-    }
+        else
+        {
+            float3 uvw = (pW - _VolumeBoundsMin) / _VolumeBoundsSize;
+            if (uvw.x >= 0.0 && uvw.x <= 1.0 &&
+                uvw.y >= 0.0 && uvw.y <= 1.0 &&
+                uvw.z >= 0.0 && uvw.z <= 1.0)
+            {
+                float4 volSample = _VolumeTexture.SampleLevel(sampler_VolumeTexture, uvw, 0);
+                density = volSample.r;
+                scatter = volSample.g;
+                attenuation = 5.0; // Default soft tissue attenuation for 3D textures
+                gradMag = length(CalculateVolumeTextureGradient(uvw));
+            }
+        }
 
-    float intensity = FormUltrasoundSignal(density, scatter, gradMag, pW, zAxial);
-    _PolarBufferOutput[id.xy] = intensity;
+        // Pulse-echo round-trip transmission factor T(z) = exp(-2 * cumOpticalDepth)
+        float roundTripTransmission = exp(-2.0 * cumOpticalDepth);
+
+        float intensity = ProcessSignal(density, scatter, gradMag, roundTripTransmission, pW);
+        _PolarBufferOutput[uint2(lineIdx, s)] = intensity;
+
+        // Cumulative attenuation integration along physical depth step
+        cumOpticalDepth += attenuation * deltaZ * _AttenuationScale;
+    }
 }
 
 // -------------------------------------------------------------
-// Kernel 1: Linear Polar Acquisition
+// Kernel 1: Linear Polar Acquisition (1D Scanline Ray-Marching)
 // -------------------------------------------------------------
-[numthreads(8, 8, 1)]
+[numthreads(64, 1, 1)]
 void AcquireLinear(uint3 id : SV_DispatchThreadID)
 {
-    if ((int)id.x >= _ScanLines || (int)id.y >= _SamplesPerScanLine)
+    uint lineIdx = id.x;
+    if ((int)lineIdx >= _ScanLines)
         return;
 
     float invLines = _ScanLines > 1 ? 1.0 / float(_ScanLines - 1) : 0.0;
     float invSamples = _SamplesPerScanLine > 1 ? 1.0 / float(_SamplesPerScanLine - 1) : 0.0;
+    float deltaZ = _SamplesPerScanLine > 1 ? _MaxDepth * invSamples : 0.0;
 
-    float u = float(id.x) * invLines;
-    float v = float(id.y) * invSamples;
-
+    float u = float(lineIdx) * invLines;
     float halfW = _ApertureWidth * 0.5;
     float xP = lerp(-halfW, halfW, u);
     float yP = 0.0;
-    float zAxial = v * _MaxDepth;
-    float zP = zAxial;
 
-    float3 pP = float3(xP, yP, zP);
-    float3 pW = _ProbePos + mul(_ProbeRotMatrix, float4(pP, 0.0)).xyz;
+    float cumOpticalDepth = 0.0;
 
-    float density = 0.0;
-    float scatter = 0.0;
-    float gradMag = 0.0;
-
-    if (_UseAnalyticalVolume == 1)
+    for (int s = 0; s < _SamplesPerScanLine; s++)
     {
-        AnatomySample sample = EvaluateAnalyticalSample(pW);
-        density = sample.density;
-        scatter = sample.scatter;
-        gradMag = length(CalculateAnalyticalGradient(pW));
-    }
-    else
-    {
-        float3 uvw = (pW - _VolumeBoundsMin) / _VolumeBoundsSize;
-        if (uvw.x >= 0.0 && uvw.x <= 1.0 &&
-            uvw.y >= 0.0 && uvw.y <= 1.0 &&
-            uvw.z >= 0.0 && uvw.z <= 1.0)
+        float v = float(s) * invSamples;
+        float zAxial = v * _MaxDepth;
+        float zP = zAxial;
+
+        float3 pP = float3(xP, yP, zP);
+        float3 pW = _ProbePos + mul(_ProbeRotMatrix, float4(pP, 0.0)).xyz;
+
+        float density = 0.0;
+        float scatter = 0.0;
+        float attenuation = 0.5;
+        float gradMag = 0.0;
+
+        if (_UseAnalyticalVolume == 1)
         {
-            float4 volSample = _VolumeTexture.SampleLevel(sampler_VolumeTexture, uvw, 0);
-            density = volSample.r;
-            scatter = volSample.g;
-            gradMag = length(CalculateVolumeTextureGradient(uvw));
+            AnatomySample samp = EvaluateAnalyticalSample(pW);
+            density = samp.density;
+            scatter = samp.scatter;
+            attenuation = samp.attenuation;
+            gradMag = length(CalculateAnalyticalGradient(pW));
         }
-    }
+        else
+        {
+            float3 uvw = (pW - _VolumeBoundsMin) / _VolumeBoundsSize;
+            if (uvw.x >= 0.0 && uvw.x <= 1.0 &&
+                uvw.y >= 0.0 && uvw.y <= 1.0 &&
+                uvw.z >= 0.0 && uvw.z <= 1.0)
+            {
+                float4 volSample = _VolumeTexture.SampleLevel(sampler_VolumeTexture, uvw, 0);
+                density = volSample.r;
+                scatter = volSample.g;
+                attenuation = 5.0;
+                gradMag = length(CalculateVolumeTextureGradient(uvw));
+            }
+        }
 
-    float intensity = FormUltrasoundSignal(density, scatter, gradMag, pW, zAxial);
-    _PolarBufferOutput[id.xy] = intensity;
+        float roundTripTransmission = exp(-2.0 * cumOpticalDepth);
+
+        float intensity = ProcessSignal(density, scatter, gradMag, roundTripTransmission, pW);
+        _PolarBufferOutput[uint2(lineIdx, s)] = intensity;
+
+        cumOpticalDepth += attenuation * deltaZ * _AttenuationScale;
+    }
 }
 
 // -------------------------------------------------------------

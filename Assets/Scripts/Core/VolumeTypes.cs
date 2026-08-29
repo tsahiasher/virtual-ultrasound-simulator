@@ -49,12 +49,12 @@ namespace VirtualUltrasound.Core
     }
 
     /// <summary>
-    /// Debug inspection modes for the Phase 4 ultrasound appearance pipeline.
+    /// Debug inspection modes for the Phase 4/5 ultrasound appearance pipeline.
     /// </summary>
     public enum AppearanceDebugView
     {
         /// <summary>
-        /// Complete Phase 4 B-mode ultrasound appearance (boundary + speckle scatter + attenuation + gain + compression).
+        /// Complete Phase 5 B-mode ultrasound appearance (boundary + speckle scatter + cumulative round-trip shadow attenuation + gain + compression).
         /// </summary>
         FinalUltrasound = 0,
 
@@ -71,7 +71,13 @@ namespace VirtualUltrasound.Core
         /// <summary>
         /// Isolated distributed tissue scattering modulated by 3D coherent speckle.
         /// </summary>
-        SpeckleScattering = 3
+        SpeckleScattering = 3,
+
+        /// <summary>
+        /// Cumulative round-trip acoustic beam transmission factor T(z) in [0, 1].
+        /// White = 100% transmission (unattenuated), Black = 0% transmission (acoustic shadow).
+        /// </summary>
+        AccumulatedTransmission = 4
     }
 
     /// <summary>
@@ -103,9 +109,9 @@ namespace VirtualUltrasound.Core
         [Range(50.0f, 3000.0f)]
         public float SpeckleScale;
 
-        [Tooltip("Acoustic depth attenuation coefficient along the scanline beam.")]
-        [Range(0.0f, 20.0f)]
-        public float DepthAttenuation;
+        [Tooltip("Global multiplier applied to tissue acoustic attenuation coefficients.")]
+        [Range(0.0f, 5.0f)]
+        public float AttenuationScale;
 
         [Tooltip("Logarithmic dynamic range compression ratio.")]
         [Range(1.0f, 100.0f)]
@@ -119,7 +125,7 @@ namespace VirtualUltrasound.Core
             BoundaryStrength = 1.8f,
             SpeckleStrength = 0.60f,
             SpeckleScale = 850.0f,
-            DepthAttenuation = 4.0f,
+            AttenuationScale = 1.0f,
             CompressionRatio = 20.0f
         };
     }
@@ -143,6 +149,12 @@ namespace VirtualUltrasound.Core
         public float Scattering;
 
         /// <summary>
+        /// Acoustic attenuation coefficient mu in m^-1 (Np/m).
+        /// Governs cumulative acoustic energy loss as the beam travels through the material.
+        /// </summary>
+        public float Attenuation;
+
+        /// <summary>
         /// Tissue category for acoustic simulation and material differentiation.
         /// </summary>
         public TissueType Tissue;
@@ -151,6 +163,7 @@ namespace VirtualUltrasound.Core
         {
             Intensity = Mathf.Clamp01(intensity);
             Scattering = Mathf.Clamp01(intensity * 0.5f);
+            Attenuation = 5.0f;
             Tissue = tissue;
         }
 
@@ -158,10 +171,19 @@ namespace VirtualUltrasound.Core
         {
             Intensity = Mathf.Clamp01(intensity);
             Scattering = Mathf.Clamp01(scattering);
+            Attenuation = 5.0f;
             Tissue = tissue;
         }
 
-        public static SampleResult Empty => new SampleResult(0f, 0f, TissueType.Background);
+        public SampleResult(float intensity, float scattering, float attenuation, TissueType tissue)
+        {
+            Intensity = Mathf.Clamp01(intensity);
+            Scattering = Mathf.Clamp01(scattering);
+            Attenuation = Mathf.Max(0.0f, attenuation);
+            Tissue = tissue;
+        }
+
+        public static SampleResult Empty => new SampleResult(0f, 0f, 0.5f, TissueType.Background);
     }
 
     /// <summary>

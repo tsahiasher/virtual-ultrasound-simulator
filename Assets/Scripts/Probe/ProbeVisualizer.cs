@@ -68,7 +68,19 @@ namespace VirtualUltrasound.Probe
         private void OnEnable()
         {
             probeGeometry = GetComponent<ProbeGeometry>();
+            if (probeGeometry != null)
+            {
+                probeGeometry.OnGeometryChanged += UpdatePlaneMesh;
+            }
             BuildVisuals();
+        }
+
+        private void OnDisable()
+        {
+            if (probeGeometry != null)
+            {
+                probeGeometry.OnGeometryChanged -= UpdatePlaneMesh;
+            }
         }
 
         private void Update()
@@ -77,8 +89,6 @@ namespace VirtualUltrasound.Probe
             {
                 BuildVisuals();
             }
-
-            UpdatePlaneMesh();
         }
 
         public void BuildVisuals()

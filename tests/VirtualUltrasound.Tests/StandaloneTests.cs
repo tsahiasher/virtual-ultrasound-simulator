@@ -18,8 +18,10 @@ namespace VirtualUltrasound.Tests
             public float SphereRadius = 0.025f; // 25mm radius
             public float InsideIntensity = 0.8f;
             public float InsideScattering = 0.6f;
+            public float InsideAttenuation = 5.0f;
             public float OutsideIntensity = 0.0f;
             public float OutsideScattering = 0.0f;
+            public float OutsideAttenuation = 5.0f;
             public int SampleCount = 0;
 
             public SampleResult SampleWorld(Vector3 worldPosition)
@@ -27,9 +29,9 @@ namespace VirtualUltrasound.Tests
                 SampleCount++;
                 if ((worldPosition - SphereCenter).sqrMagnitude <= (SphereRadius * SphereRadius))
                 {
-                    return new SampleResult(InsideIntensity, InsideScattering, TissueType.Organ1);
+                    return new SampleResult(InsideIntensity, InsideScattering, InsideAttenuation, TissueType.Organ1);
                 }
-                return new SampleResult(OutsideIntensity, OutsideScattering, TissueType.Background);
+                return new SampleResult(OutsideIntensity, OutsideScattering, OutsideAttenuation, TissueType.Background);
             }
         }
 
@@ -624,7 +626,7 @@ namespace VirtualUltrasound.Tests
                 Enabled = true,
                 DebugView = AppearanceDebugView.FinalUltrasound,
                 SpeckleStrength = 0.0f, // zero speckle to test pure attenuation decay
-                DepthAttenuation = 10.0f, // 10 m^-1 decay
+                AttenuationScale = 1.0f,
                 Gain = 1.0f,
                 CompressionRatio = 1.0f
             };
@@ -660,7 +662,7 @@ namespace VirtualUltrasound.Tests
                 DebugView = AppearanceDebugView.FinalUltrasound,
                 Gain = 0.5f,
                 SpeckleStrength = 0.0f,
-                DepthAttenuation = 0.0f,
+                AttenuationScale = 0.0f,
                 CompressionRatio = 10.0f
             };
 
@@ -670,7 +672,7 @@ namespace VirtualUltrasound.Tests
                 DebugView = AppearanceDebugView.FinalUltrasound,
                 Gain = 2.5f,
                 SpeckleStrength = 0.0f,
-                DepthAttenuation = 0.0f,
+                AttenuationScale = 0.0f,
                 CompressionRatio = 10.0f
             };
 
@@ -789,6 +791,240 @@ namespace VirtualUltrasound.Tests
             Assert.AreEqual(0.0f, display.Intensities[topRightIdx], 1e-4f, "Acoustic mask must remain strictly black outside sector.");
         }
 
+        #region Phase 5: Acoustic Attenuation & Shadow Tests
+
+        [Test]
+        public void Attenuation_HomogeneousMedium_MonotonicDecay()
+        {
+            CountingMockVolumeSampler sampler = new CountingMockVolumeSampler
+            {
+                SphereRadius = 0.0f, // Homogeneous medium
+                OutsideIntensity = 0.5f,
+                OutsideScattering = 0.5f,
+                OutsideAttenuation = 10.0f // 10 m^-1
+            };
+
+            CPUSliceGenerator generator = new CPUSliceGenerator();
+            PolarBuffer polar = new PolarBuffer(8, 128);
+            UltrasoundAppearanceSettings app = UltrasoundAppearanceSettings.Default;
+            app.DebugView = AppearanceDebugView.AccumulatedTransmission; // Inspect raw T(z)
+
+            generator.AcquirePolarData(Vector3.zero, Quaternion.identity, 0.05f, 0.120f, ProbeType.Linear, 0f, 0f, sampler, polar, app);
+
+            // Verify that transmission decreases monotonically along depth
+            float prevT = polar.GetSample(4, 0);
+            Assert.AreEqual(1.0f, prevT, 1e-4f, "Transmission at depth 0 must be 1.0 (100%).");
+
+            for (int s = 1; s < polar.Samples; s++)
+            {
+                float currentT = polar.GetSample(4, s);
+                Assert.LessOrEqual(currentT, prevT, $"Transmission at sample {s} must be <= transmission at sample {s - 1}");
+                prevT = currentT;
+            }
+        }
+
+        [Test]
+        public void Attenuation_ZeroCoefficient_PreservesFullTransmission()
+        {
+            CountingMockVolumeSampler sampler = new CountingMockVolumeSampler
+            {
+                SphereRadius = 0.0f, // Homogeneous
+                OutsideIntensity = 0.5f,
+                OutsideScattering = 0.5f,
+                OutsideAttenuation = 0.0f, // Zero attenuation
+                InsideAttenuation = 0.0f
+            };
+
+            CPUSliceGenerator generator = new CPUSliceGenerator();
+            PolarBuffer polar = new PolarBuffer(8, 64);
+            UltrasoundAppearanceSettings app = UltrasoundAppearanceSettings.Default;
+            app.DebugView = AppearanceDebugView.AccumulatedTransmission;
+
+            generator.AcquirePolarData(Vector3.zero, Quaternion.identity, 0.05f, 0.120f, ProbeType.Linear, 0f, 0f, sampler, polar, app);
+
+            for (int s = 0; s < polar.Samples; s++)
+            {
+                float t = polar.GetSample(4, s);
+                Assert.AreEqual(1.0f, t, 1e-4f, $"Transmission with mu=0 must remain strictly 1.0 at sample {s}.");
+            }
+        }
+
+        [Test]
+        public void Attenuation_StrongVsWeak_ProducesGreaterExtinction()
+        {
+            CountingMockVolumeSampler weakSampler = new CountingMockVolumeSampler
+            {
+                SphereRadius = 0.0f,
+                OutsideIntensity = 0.5f,
+                OutsideScattering = 0.5f,
+                OutsideAttenuation = 4.0f // Soft tissue: 4 m^-1
+            };
+
+            CountingMockVolumeSampler strongSampler = new CountingMockVolumeSampler
+            {
+                SphereRadius = 0.0f,
+                OutsideIntensity = 0.5f,
+                OutsideScattering = 0.5f,
+                OutsideAttenuation = 50.0f // Strong attenuator: 50 m^-1
+            };
+
+            CPUSliceGenerator generator = new CPUSliceGenerator();
+            PolarBuffer weakPolar = new PolarBuffer(8, 64);
+            PolarBuffer strongPolar = new PolarBuffer(8, 64);
+            UltrasoundAppearanceSettings app = UltrasoundAppearanceSettings.Default;
+            app.DebugView = AppearanceDebugView.AccumulatedTransmission;
+
+            generator.AcquirePolarData(Vector3.zero, Quaternion.identity, 0.05f, 0.100f, ProbeType.Linear, 0f, 0f, weakSampler, weakPolar, app);
+            generator.AcquirePolarData(Vector3.zero, Quaternion.identity, 0.05f, 0.100f, ProbeType.Linear, 0f, 0f, strongSampler, strongPolar, app);
+
+            // Compare transmission at deep sample (e.g. sample index 50 out of 64 -> ~80mm depth)
+            float weakT = weakPolar.GetSample(4, 50);
+            float strongT = strongPolar.GetSample(4, 50);
+
+            Assert.Greater(weakT, strongT, "Weakly attenuating medium must preserve significantly more acoustic transmission than strongly attenuating medium.");
+            Assert.Less(strongT, 0.001f, "Strong attenuator should extinguish beam energy almost completely at depth.");
+        }
+
+        [Test]
+        public void Attenuation_SampleResolutionIndependence_IsInvariant()
+        {
+            CountingMockVolumeSampler sampler = new CountingMockVolumeSampler
+            {
+                SphereRadius = 0.0f,
+                OutsideIntensity = 0.5f,
+                OutsideScattering = 0.5f,
+                OutsideAttenuation = 8.0f // 8 m^-1
+            };
+
+            CPUSliceGenerator generator = new CPUSliceGenerator();
+            UltrasoundAppearanceSettings app = UltrasoundAppearanceSettings.Default;
+            app.DebugView = AppearanceDebugView.AccumulatedTransmission;
+
+            float maxDepth = 0.100f; // 100mm total depth
+            float targetDepth = 0.060f; // Test transmission at 60mm physical depth
+
+            // Case A: Low sample resolution (64 samples -> 60mm is at index 38)
+            int samplesLow = 64;
+            PolarBuffer polarLow = new PolarBuffer(8, samplesLow);
+            generator.AcquirePolarData(Vector3.zero, Quaternion.identity, 0.05f, maxDepth, ProbeType.Linear, 0f, 0f, sampler, polarLow, app);
+            int idxLow = (int)Mathf.Round((targetDepth / maxDepth) * (samplesLow - 1));
+            float tLow = polarLow.GetSample(4, idxLow);
+
+            // Case B: High sample resolution (512 samples -> 60mm is at index 307)
+            int samplesHigh = 512;
+            PolarBuffer polarHigh = new PolarBuffer(8, samplesHigh);
+            generator.AcquirePolarData(Vector3.zero, Quaternion.identity, 0.05f, maxDepth, ProbeType.Linear, 0f, 0f, sampler, polarHigh, app);
+            int idxHigh = (int)Mathf.Round((targetDepth / maxDepth) * (samplesHigh - 1));
+            float tHigh = polarHigh.GetSample(4, idxHigh);
+
+            // Analytical expected round-trip transmission: exp(-2 * mu * z) = exp(-2 * 8.0 * 0.060) = exp(-0.96) ~= 0.38289
+            float expectedT = MathF.Exp(-2.0f * 8.0f * targetDepth);
+
+            Assert.AreEqual(expectedT, tLow, 0.015f, "Low sample resolution transmission must match physical analytical attenuation.");
+            Assert.AreEqual(expectedT, tHigh, 0.005f, "High sample resolution transmission must match physical analytical attenuation.");
+            Assert.AreEqual(tLow, tHigh, 0.015f, "Transmission must be invariant to SamplesPerScanLine discretization count.");
+        }
+
+        [Test]
+        public void Attenuation_MaterialTransition_AcceleratesDecay()
+        {
+            CountingMockVolumeSampler sampler = new CountingMockVolumeSampler
+            {
+                SphereCenter = new Vector3(0f, 0f, 0.060f), // Structure placed at 60mm
+                SphereRadius = 0.015f, // 15mm radius (extends 45mm to 75mm)
+                OutsideAttenuation = 2.0f, // Low attenuation outside
+                InsideAttenuation = 50.0f // Massive attenuation inside
+            };
+
+            CPUSliceGenerator generator = new CPUSliceGenerator();
+            PolarBuffer polar = new PolarBuffer(8, 100);
+            UltrasoundAppearanceSettings app = UltrasoundAppearanceSettings.Default;
+            app.DebugView = AppearanceDebugView.AccumulatedTransmission;
+
+            generator.AcquirePolarData(Vector3.zero, Quaternion.identity, 0.05f, 0.100f, ProbeType.Linear, 0f, 0f, sampler, polar, app);
+
+            // Rate of decay before entering sphere (samples 20 to 30: 20mm to 30mm depth)
+            float dropBefore = polar.GetSample(4, 20) - polar.GetSample(4, 30);
+
+            // Rate of decay inside sphere (samples 50 to 60: 50mm to 60mm depth)
+            float dropInside = polar.GetSample(4, 50) - polar.GetSample(4, 60);
+
+            Assert.Greater(dropInside, dropBefore * 5.0f, "Entering high attenuation material must significantly accelerate transmission decay.");
+        }
+
+        [Test]
+        public void Attenuation_ShadowTest_DeepTargetBehindAttenuatorIsDarkened()
+        {
+            // Scenario: Ray 8 passes through a strong attenuator; Ray 0 misses it (free path).
+            CountingMockVolumeSampler sampler = new CountingMockVolumeSampler
+            {
+                SphereCenter = new Vector3(0f, 0f, 0.040f), // Strong attenuator at 40mm depth
+                SphereRadius = 0.015f,
+                InsideIntensity = 0.90f,
+                InsideScattering = 0.80f,
+                InsideAttenuation = 60.0f, // Massive attenuation -> casts shadow
+
+                OutsideIntensity = 0.40f,
+                OutsideScattering = 0.30f,
+                OutsideAttenuation = 3.0f // Gentle soft tissue attenuation
+            };
+
+            CPUSliceGenerator generator = new CPUSliceGenerator();
+            PolarBuffer polar = new PolarBuffer(16, 128);
+            UltrasoundAppearanceSettings app = UltrasoundAppearanceSettings.Default;
+
+            // Probe centered at (0, 0, 0)
+            generator.AcquirePolarData(Vector3.zero, Quaternion.identity, 0.06f, 0.100f, ProbeType.Linear, 0f, 0f, sampler, polar, app);
+
+            // Ray 8 (center) hits the attenuator at 40mm and passes to 80mm depth
+            int centralRayIdx = 8;
+            int deepSampleIdx = (int)(128 * 0.80f); // 80mm depth
+
+            // Ray 0 (edge) misses the attenuator completely
+            int edgeRayIdx = 0;
+
+            // Check transmission at 80mm
+            app.DebugView = AppearanceDebugView.AccumulatedTransmission;
+            PolarBuffer transmissionPolar = new PolarBuffer(16, 128);
+            generator.AcquirePolarData(Vector3.zero, Quaternion.identity, 0.06f, 0.100f, ProbeType.Linear, 0f, 0f, sampler, transmissionPolar, app);
+
+            float centralTransmission = transmissionPolar.GetSample(centralRayIdx, deepSampleIdx);
+            float edgeTransmission = transmissionPolar.GetSample(edgeRayIdx, deepSampleIdx);
+
+            Assert.Less(centralTransmission, 0.05f, "Central beam behind strong attenuator must have near-zero transmission (acoustic shadow).");
+            Assert.Greater(edgeTransmission, 0.50f, "Edge beam that misses the attenuator must preserve high transmission.");
+            Assert.Less(centralTransmission, edgeTransmission * 0.1f, "Shadowed beam transmission must be < 10% of unshadowed beam transmission.");
+        }
+
+        [Test]
+        public void Attenuation_RoundTrip_MathematicalModelVerified()
+        {
+            CountingMockVolumeSampler sampler = new CountingMockVolumeSampler
+            {
+                SphereRadius = 0.0f,
+                OutsideAttenuation = 6.0f // 6 m^-1
+            };
+
+            CPUSliceGenerator generator = new CPUSliceGenerator();
+            PolarBuffer polar = new PolarBuffer(4, 101);
+            UltrasoundAppearanceSettings app = UltrasoundAppearanceSettings.Default;
+            app.DebugView = AppearanceDebugView.AccumulatedTransmission;
+
+            float maxDepth = 0.100f; // 100mm
+            generator.AcquirePolarData(Vector3.zero, Quaternion.identity, 0.02f, maxDepth, ProbeType.Linear, 0f, 0f, sampler, polar, app);
+
+            // Test transmission at depth z = 0.050m (sample index 50)
+            float depth = 0.050f;
+            float tActual = polar.GetSample(2, 50);
+
+            // Mathematical ground truth: T = exp(-2 * mu * z)
+            float tExpected = MathF.Exp(-2.0f * 6.0f * depth); // exp(-0.60) ~= 0.5488
+
+            Assert.AreEqual(tExpected, tActual, 0.005f, "Round-trip pulse-echo transmission must match exp(-2 * mu * z) precisely.");
+        }
+
+        #endregion
+
         [Test]
         public void Benchmark_TwoStagePipeline_PerformanceMetrics()
         {
@@ -804,7 +1040,7 @@ namespace VirtualUltrasound.Tests
                 (512, 512, 256, 256, "Stress")
             };
 
-            Console.WriteLine("\n--- CPU Reference Performance Benchmark (Phase 4 Profiling) ---");
+            Console.WriteLine("\n--- CPU Reference Performance Benchmark (Phase 5 Profiling) ---");
             foreach (var cfg in configs)
             {
                 PolarBuffer polar = new PolarBuffer(cfg.lines, cfg.samples);
